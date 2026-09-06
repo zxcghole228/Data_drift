@@ -1,0 +1,50 @@
+# Пример для синтетических данных, а не универсальная production-конфигурация.
+# Runtime-валидация и точные типы конфигурации согласуются 07.09.
+contract_version: "0.1"
+random_seed: 42
+
+schema:
+  allow_extra_columns: false
+  features:
+    age:
+      kind: numeric
+      dtype: float64
+      nullable: true
+      min: 18
+      max: 100
+    income:
+      kind: numeric
+      dtype: float64
+      nullable: true
+      min: 0
+      max: 1000000
+    region:
+      kind: categorical
+      dtype: string
+      nullable: true
+
+quality:
+  # Иллюстративные значения; проверяются на сценариях команды.
+  max_missing_fraction: 0.10
+  max_missing_increase_pp: 5.0
+  max_duplicate_fraction: 0.01
+
+drift:
+  numeric_methods: [ks, wasserstein, psi, js]
+  categorical_methods: [chi2, psi, js]
+  alpha: 0.05
+  multiple_testing: bh
+  n_bins: 10
+  psi_smoothing: 0.000001
+  js_base: 2
+  # Пока null: вычисление метрики не даёт автоматического решения по порогу.
+  distance_thresholds:
+    wasserstein: null
+    psi: null
+    js: null
+
+adversarial:
+  enabled: false
+  n_splits: 3
+  roc_auc_threshold: null
+  exclude_columns: []

@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "data-drift-guardian"
+version = "0.1.0"
+description = "Scaffold for a tabular data quality and drift monitoring project"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy",
+    "pandas",
+    "scipy",
+    "scikit-learn",
+    "lightgbm",
+    "plotly",
+    "streamlit",
+    "PyYAML",
+    "pyarrow",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "jupyter", "nbformat"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
