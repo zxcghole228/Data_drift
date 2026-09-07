@@ -6,11 +6,69 @@ TypedDict описывает словарь, но сам по себе не вы
 
 from __future__ import annotations
 
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict
 
 Status = Literal["ok", "warning", "critical", "skipped", "error"]
 FeatureType = Literal["numeric", "categorical"]
 AlertSource = Literal["schema", "quality", "drift", "adversarial"]
+MultipleTestingMethod = Literal["none", "bh"]
+
+
+class FeatureConfig(TypedDict):
+    """Семантическая схема одного признака.
+
+    ``kind`` задаёт семейство допустимых pandas dtype. Точный физический dtype
+    фиксируется в отчёте, но не требуется совпадение int64 с float64.
+    """
+
+    kind: FeatureType
+    nullable: bool
+    min: NotRequired[float | int]
+    max: NotRequired[float | int]
+
+
+class SchemaConfig(TypedDict):
+    allow_extra_columns: bool
+    features: dict[str, FeatureConfig]
+
+
+class QualityConfig(TypedDict):
+    max_missing_fraction: float
+    max_missing_increase_pp: float
+    max_duplicate_fraction: float
+
+
+class DistanceThresholds(TypedDict):
+    wasserstein: float | None
+    psi: float | None
+    js: float | None
+
+
+class DriftConfig(TypedDict):
+    numeric_methods: list[Literal["ks", "wasserstein", "psi", "js"]]
+    categorical_methods: list[Literal["chi2", "psi", "js"]]
+    alpha: float
+    multiple_testing: MultipleTestingMethod
+    n_bins: int
+    psi_smoothing: float
+    js_base: float
+    distance_thresholds: DistanceThresholds
+
+
+class AdversarialConfig(TypedDict):
+    enabled: bool
+    n_splits: int
+    roc_auc_threshold: float | None
+    exclude_columns: list[str]
+
+
+class AnalysisConfig(TypedDict):
+    contract_version: str
+    random_seed: int
+    schema: SchemaConfig
+    quality: QualityConfig
+    drift: DriftConfig
+    adversarial: AdversarialConfig
 
 
 class CheckResult(TypedDict):

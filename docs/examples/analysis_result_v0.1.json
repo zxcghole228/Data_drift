@@ -1,0 +1,58 @@
+{
+  "contract_version": "0.1",
+  "metadata": {
+    "reference_rows": 1000,
+    "current_rows": 1000,
+    "random_seed": 42
+  },
+  "schema": {
+    "status": "ok",
+    "missing_columns": {
+      "reference": [],
+      "current": []
+    },
+    "extra_columns": {
+      "reference": [],
+      "current": []
+    },
+    "duplicate_columns": {
+      "reference": [],
+      "current": []
+    },
+    "type_mismatches": [],
+    "valid_features": [
+      "age",
+      "income",
+      "region"
+    ],
+    "reason": null
+  },
+  "quality": {
+    "status": "skipped",
+    "dataset_checks": [],
+    "feature_checks": {},
+    "reason": "Contract fixture: Data Quality calculations were not run."
+  },
+  "drift": {
+    "status": "skipped",
+    "features": {},
+    "reason": "Contract fixture: drift calculations were not run."
+  },
+  "adversarial": {
+    "status": "skipped",
+    "roc_auc": null,
+    "fold_auc": [],
+    "feature_importance": {},
+    "importance_type": null,
+    "alert": null,
+    "reason": "Contract fixture: Adversarial Validation was not run."
+  },
+  "alerts": [],
+  "summary": {
+    "status": "skipped",
+    "has_alerts": false,
+    "n_alerts": 0,
+    "analyzed_features": 0,
+    "skipped_features": 3
+  }
+}
