@@ -69,7 +69,7 @@ def collect_environment() -> dict[str, object]:
         "python": platform.python_version(),
         "implementation": platform.python_implementation(),
         "platform": platform.platform(),
-        "python_3_12": sys.version_info[:2] == (3, 12),
+        "python_3_13": sys.version_info[:2] == (3, 13),
         "packages": [inspect_package(*package) for package in PACKAGES],
     }
 
@@ -77,7 +77,7 @@ def collect_environment() -> dict[str, object]:
 def print_table(report: dict[str, object]) -> None:
     print(f"Python: {report['python']} ({report['implementation']})")
     print(f"Platform: {report['platform']}")
-    print(f"Python 3.12: {'OK' if report['python_3_12'] else 'FAIL'}")
+    print(f"Python 3.13: {'OK' if report['python_3_13'] else 'FAIL'}")
     print()
     print(f"{'Package':<18} {'Version':<18} Import")
     print("-" * 56)
@@ -104,7 +104,7 @@ def main() -> int:
         for package in report["packages"]
         if isinstance(package, dict)
     )
-    return 0 if report["python_3_12"] and imports_ok else 1
+    return 0 if report["python_3_13"] and imports_ok else 1
 
 
 if __name__ == "__main__":
