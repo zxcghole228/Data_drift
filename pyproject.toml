@@ -7,21 +7,25 @@ name = "data-drift-guardian"
 version = "0.1.0"
 description = "Scaffold for a tabular data quality and drift monitoring project"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12,<3.13"
 dependencies = [
-    "numpy",
-    "pandas",
-    "scipy",
-    "scikit-learn",
-    "lightgbm",
-    "plotly",
-    "streamlit",
-    "PyYAML",
-    "pyarrow",
+    "numpy>=2.0,<3",
+    "pandas>=2.2,<4",
+    "scipy>=1.13,<2",
+    "scikit-learn>=1.5,<2",
+    "lightgbm>=4.3,<5",
+    "plotly>=5.20,<7",
+    "streamlit>=1.35,<2",
+    "PyYAML>=6,<7",
+    "pyarrow>=16,<24",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "jupyter", "nbformat"]
+dev = [
+    "pytest>=8,<10",
+    "jupyter>=1,<2",
+    "nbformat>=5.10,<6",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -1,5 +1,6 @@
 # Пример для синтетических данных, а не универсальная production-конфигурация.
-# Runtime-валидация и точные типы конфигурации согласуются 07.09.
+# Схема использует семантические типы. Например, int64 и float64 совместимы
+# с kind: numeric; фактический pandas dtype всё равно попадёт в отчёт.
 contract_version: "0.1"
 random_seed: 42
 
@@ -8,19 +9,16 @@ schema:
   features:
     age:
       kind: numeric
-      dtype: float64
       nullable: true
       min: 18
       max: 100
     income:
       kind: numeric
-      dtype: float64
       nullable: true
       min: 0
       max: 1000000
     region:
       kind: categorical
-      dtype: string
       nullable: true
 
 quality:
