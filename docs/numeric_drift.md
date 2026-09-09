@@ -49,3 +49,23 @@ wasserstein_result = wasserstein(reference, current)
 
 Обе функции возвращают общий `CheckResult`. Размеры и очистка выборок доступны
 через `result["details"]`; численное значение — через `result["value"]`.
+
+## Воспроизводимый пример для передачи в pipeline
+
+Для генератора с `seed=42`, `n_reference=5000`, `n_current=3000` получены такие
+результаты по `age`:
+
+| Сценарий | KS D | KS p-value | Wasserstein |
+| --- | ---: | ---: | ---: |
+| `none` | 0.013733 | 0.866786 | 0.3714 года |
+| `numeric` (сдвиг +8 лет) | 0.270867 | 1.6534e-121 | 8.3687 года |
+
+Это наблюдение для конкретного seed и размеров, а не универсальная граница
+алерта. Минимальный объект для pipeline можно собрать так:
+
+```python
+checks = {
+    "ks": ks_test(reference["age"], current["age"]),
+    "wasserstein": wasserstein(reference["age"], current["age"]),
+}
+```
