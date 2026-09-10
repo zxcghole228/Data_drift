@@ -157,6 +157,10 @@ Mutation = Callable[[dict[str, Any]], None]
             "psi_smoothing",
         ),
         (
+            lambda config: config["drift"].__setitem__("psi_smoothing", 1),
+            "psi_smoothing",
+        ),
+        (
             lambda config: config["drift"].__setitem__("js_base", 1),
             "js_base",
         ),
