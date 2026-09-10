@@ -268,8 +268,8 @@ def _validate_drift_config(config: object) -> DriftConfig:
     psi_smoothing = float(
         _as_number(section["psi_smoothing"], "drift.psi_smoothing")
     )
-    if psi_smoothing <= 0.0:
-        raise ValueError("drift.psi_smoothing должен быть больше 0")
+    if not 0.0 < psi_smoothing < 1.0:
+        raise ValueError("drift.psi_smoothing должен находиться в диапазоне (0, 1)")
 
     js_base = float(_as_number(section["js_base"], "drift.js_base"))
     if js_base <= 0.0 or js_base == 1.0:

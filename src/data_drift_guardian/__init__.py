@@ -1,4 +1,4 @@
-"""Data Drift Guardian: начальный каркас; вычисления ещё не реализованы."""
+"""Data Drift Guardian: контроль качества и обнаружение дрейфа данных."""
 
 from .pipeline import analyze
 
