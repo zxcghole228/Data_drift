@@ -41,6 +41,7 @@
   "adversarial": {
     "status": "skipped",
     "roc_auc": null,
+    "threshold": null,
     "fold_auc": [],
     "feature_importance": {},
     "importance_type": null,
