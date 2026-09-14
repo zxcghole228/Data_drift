@@ -6,7 +6,6 @@ from pathlib import Path
 
 from streamlit.testing.v1 import AppTest
 
-
 APP_PATH = Path(__file__).resolve().parents[2] / "app" / "streamlit_app.py"
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[2] / "configs" / "default.yaml"
 
@@ -47,9 +46,7 @@ def test_app_waits_for_explicit_analysis_request() -> None:
 
     assert not app.exception
     assert len(app.metric) == 0
-    assert any(
-        "явно запустите анализ" in message.value.lower() for message in app.info
-    )
+    assert any("явно запустите анализ" in message.value.lower() for message in app.info)
 
 
 def test_app_runs_real_pipeline_and_keeps_result_across_reruns() -> None:
@@ -121,6 +118,23 @@ def test_changing_input_clears_previous_result() -> None:
 
     assert not app.exception
     assert len(app.metric) == 0
-    assert any(
-        "явно запустите анализ" in message.value.lower() for message in app.info
+    assert any("явно запустите анализ" in message.value.lower() for message in app.info)
+
+
+def test_app_shows_oof_auc_folds_and_feature_importance_when_enabled() -> None:
+    app = _loaded_app()
+    app.radio(key="config_source").set_value("Загрузить YAML").run()
+    enabled_config = DEFAULT_CONFIG_PATH.read_text(encoding="utf-8").replace(
+        "enabled: false", "enabled: true"
     )
+    app.file_uploader(key="config_file").set_value(
+        ("adversarial.yaml", enabled_config.encode(), "application/yaml")
+    )
+    app.run()
+
+    app.button(key="run_analysis").click().run()
+
+    assert not app.exception
+    assert any(metric.label == "Отложенный ROC-AUC" for metric in app.metric)
+    assert len(app.dataframe) >= 5
+    assert any("причинный эффект" in caption.value.lower() for caption in app.caption)

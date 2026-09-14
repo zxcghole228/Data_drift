@@ -111,8 +111,9 @@ def test_normal_pass_combines_real_modules_and_preserves_inputs(
     ]
 
     region_checks = result["drift"]["features"]["region"]["checks"]
-    assert region_checks["chi2"]["status"] == "skipped"
-    assert region_checks["chi2"]["reason"] is not None
+    assert region_checks["chi2"]["status"] == "ok"
+    assert region_checks["chi2"]["p_value"] == pytest.approx(1.0)
+    assert region_checks["chi2"]["adjusted_p_value"] == pytest.approx(1.0)
     assert region_checks["psi"]["status"] == "ok"
     assert region_checks["js"]["status"] == "ok"
     assert result["adversarial"]["status"] == "skipped"
@@ -231,7 +232,7 @@ def test_raw_p_value_rule_is_used_only_when_multiple_testing_is_none() -> None:
     assert check["details"]["decision"] == "raw_p_value"
 
 
-def test_bh_configuration_defers_alert_until_correction_is_available(
+def test_bh_configuration_corrects_complete_ks_chi2_family(
     valid_config: dict[str, Any],
     healthy_frames: tuple[pd.DataFrame, pd.DataFrame],
 ) -> None:
@@ -244,9 +245,46 @@ def test_bh_configuration_defers_alert_until_correction_is_available(
     assert check["p_value"] is not None
     assert check["p_value"] < valid_config["drift"]["alpha"]
     assert check["threshold"] == valid_config["drift"]["alpha"]
-    assert check["adjusted_p_value"] is None
-    assert check["alert"] is None
-    assert check["details"]["decision"] == "deferred_until_bh_correction"
+    assert check["adjusted_p_value"] is not None
+    assert check["adjusted_p_value"] < valid_config["drift"]["alpha"]
+    assert check["alert"] is True
+    assert check["details"]["decision"] == "benjamini_hochberg_adjusted_p_value"
+    assert check["details"]["multiple_testing_family_size"] == 3
+    assert check["p_value"] < check["adjusted_p_value"]
+
+
+def test_categorical_shift_is_calculated_and_alerted_after_bh(
+    valid_config: dict[str, Any],
+) -> None:
+    reference = pd.DataFrame(
+        {
+            "age": np.arange(200.0),
+            "income": np.arange(1_000.0, 1_200.0),
+            "region": ["north"] * 180 + ["south"] * 20,
+        }
+    )
+    current = pd.DataFrame(
+        {
+            "age": np.arange(200.0),
+            "income": np.arange(1_000.0, 1_200.0),
+            "region": ["north"] * 20 + ["south"] * 180,
+        }
+    )
+
+    result = analyze(reference, current, valid_config)
+
+    chi2 = result["drift"]["features"]["region"]["checks"]["chi2"]
+    assert chi2["status"] == "warning"
+    assert chi2["p_value"] is not None
+    assert chi2["adjusted_p_value"] is not None
+    assert chi2["alert"] is True
+    assert any(
+        alert["feature"] == "region"
+        and alert["check"] == "chi2"
+        and "alpha=0.05" in alert["message"]
+        for alert in result["alerts"]
+    )
+    json.dumps(result, allow_nan=False)
 
 
 def test_all_missing_feature_is_explicitly_skipped_in_drift() -> None:
@@ -267,7 +305,7 @@ def test_all_missing_feature_is_explicitly_skipped_in_drift() -> None:
     json.dumps(result, allow_nan=False)
 
 
-def test_enabled_unavailable_adversarial_module_is_explicitly_skipped(
+def test_enabled_adversarial_module_returns_real_oof_result(
     valid_config: dict[str, Any],
     healthy_frames: tuple[pd.DataFrame, pd.DataFrame],
 ) -> None:
@@ -276,10 +314,67 @@ def test_enabled_unavailable_adversarial_module_is_explicitly_skipped(
 
     result = analyze(reference, current, valid_config)
 
-    assert result["adversarial"]["status"] == "skipped"
+    assert result["adversarial"]["status"] == "ok"
+    assert result["adversarial"]["roc_auc"] is not None
+    assert len(result["adversarial"]["fold_auc"]) == 3
+    assert set(result["adversarial"]["feature_importance"]) == {
+        "age",
+        "income",
+        "region",
+    }
+    assert result["adversarial"]["threshold"] is None
     assert result["adversarial"]["alert"] is None
-    assert result["adversarial"]["reason"] is not None
-    assert "не реализован" in result["adversarial"]["reason"]
+    json.dumps(result, allow_nan=False)
+
+
+def test_adversarial_threshold_creates_global_alert(
+    valid_config: dict[str, Any],
+) -> None:
+    rng = np.random.default_rng(11)
+    reference = pd.DataFrame(
+        {
+            "age": rng.normal(25, 1, 120),
+            "income": rng.normal(50_000, 1_000, 120),
+            "region": ["north"] * 120,
+        }
+    )
+    current = pd.DataFrame(
+        {
+            "age": rng.normal(75, 1, 120),
+            "income": rng.normal(50_000, 1_000, 120),
+            "region": ["north"] * 120,
+        }
+    )
+    valid_config["adversarial"].update({"enabled": True, "roc_auc_threshold": 0.8})
+
+    result = analyze(reference, current, valid_config)
+
+    adversarial = result["adversarial"]
+    assert adversarial["status"] == "warning"
+    assert adversarial["roc_auc"] is not None
+    assert adversarial["roc_auc"] > 0.95
+    assert adversarial["alert"] is True
+    assert any(
+        alert["source"] == "adversarial"
+        and alert["check"] == "roc_auc"
+        and "threshold=0.8" in alert["message"]
+        for alert in result["alerts"]
+    )
+
+
+def test_adversarial_with_no_valid_features_is_explicitly_skipped(
+    valid_config: dict[str, Any],
+    healthy_frames: tuple[pd.DataFrame, pd.DataFrame],
+) -> None:
+    reference, current = healthy_frames
+    valid_config["adversarial"]["enabled"] = True
+    valid_config["adversarial"]["exclude_columns"] = ["age", "income", "region"]
+
+    result = analyze(reference, current, valid_config)
+
+    assert result["adversarial"]["status"] == "skipped"
+    assert result["adversarial"]["roc_auc"] is None
+    assert "не осталось" in str(result["adversarial"]["reason"])
 
 
 def test_invalid_inputs_follow_public_error_contract(

@@ -126,6 +126,7 @@ class DriftResult(TypedDict):
 class AdversarialResult(TypedDict):
     status: Status
     roc_auc: float | None
+    threshold: float | None
     fold_auc: list[float]
     feature_importance: dict[str, float]
     importance_type: str | None

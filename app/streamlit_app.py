@@ -15,7 +15,6 @@ from data_drift_guardian.contracts import AnalysisConfig, AnalysisResult, Status
 from data_drift_guardian.ingestion import load_table
 from data_drift_guardian.reporting import distribution_figure
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "configs" / "default.yaml"
 ANALYSIS_STATE_KEY = "analysis_payload"
@@ -105,6 +104,7 @@ def _check_row(
         "Значение": _format_value(check["value"]),
         "Порог": _format_value(check["threshold"]),
         "p-value": _format_value(check["p_value"]),
+        "Скорр. p-value": _format_value(check["adjusted_p_value"]),
         "Алерт": _format_value(check["alert"]),
         "Причина": str(check["reason"] or "—"),
     }
@@ -157,8 +157,7 @@ def _render_alerts(result: AnalysisResult) -> None:
     for alert in result["alerts"]:
         feature = f" · признак `{alert['feature']}`" if alert["feature"] else ""
         message = (
-            f"**{alert['source']} / {alert['check']}**{feature}: "
-            f"{alert['message']}"
+            f"**{alert['source']} / {alert['check']}**{feature}: {alert['message']}"
         )
         if alert["severity"] == "critical":
             st.error(message)
@@ -195,30 +194,57 @@ def _render_drift(result: AnalysisResult) -> None:
     feature_rows = _feature_rows(result)
     if feature_rows:
         st.markdown("#### Сводка по признакам")
-        st.dataframe(
-            pd.DataFrame(feature_rows), hide_index=True, width="stretch"
-        )
+        st.dataframe(pd.DataFrame(feature_rows), hide_index=True, width="stretch")
 
     check_rows = _drift_rows(result)
     if check_rows:
         st.markdown("#### Метрики")
-        st.dataframe(
-            pd.DataFrame(check_rows), hide_index=True, width="stretch"
-        )
+        st.dataframe(pd.DataFrame(check_rows), hide_index=True, width="stretch")
     elif not feature_rows:
         st.info("Drift-метрики не рассчитывались.")
 
 
 def _render_adversarial(result: AnalysisResult) -> None:
+    adversarial = result["adversarial"]
     with st.expander(
         "Adversarial Validation",
-        expanded=result["adversarial"]["status"] not in {"ok", "skipped"},
+        expanded=adversarial["status"] not in {"ok", "skipped"},
     ):
-        _show_status(result["adversarial"]["status"], prefix="ML-проверка")
-        if result["adversarial"]["reason"]:
-            st.write(result["adversarial"]["reason"])
-        if result["adversarial"]["roc_auc"] is not None:
-            st.metric("ROC-AUC", f"{result['adversarial']['roc_auc']:.4f}")
+        _show_status(adversarial["status"], prefix="ML-проверка")
+        if adversarial["reason"]:
+            st.write(adversarial["reason"])
+        if adversarial["roc_auc"] is not None:
+            st.metric("Отложенный ROC-AUC", f"{adversarial['roc_auc']:.4f}")
+            st.caption(
+                "Порог алерта: "
+                f"{_format_value(adversarial['threshold'])} · "
+                f"решение: {_format_value(adversarial['alert'])}"
+            )
+        if adversarial["fold_auc"]:
+            st.markdown("#### ROC-AUC по фолдам")
+            st.dataframe(
+                pd.DataFrame(
+                    {
+                        "Фолд": range(1, len(adversarial["fold_auc"]) + 1),
+                        "ROC-AUC": adversarial["fold_auc"],
+                    }
+                ),
+                hide_index=True,
+                width="stretch",
+            )
+        if adversarial["feature_importance"]:
+            st.markdown("#### Важности признаков")
+            importance = pd.DataFrame(
+                [
+                    {"Признак": feature, "Важность": value}
+                    for feature, value in adversarial["feature_importance"].items()
+                ]
+            )
+            st.dataframe(importance, hide_index=True, width="stretch")
+            st.caption(
+                f"Тип: {adversarial['importance_type']}. Важность показывает "
+                "вклад в различение выборок, но не причинный эффект."
+            )
 
 
 def _render_distribution(

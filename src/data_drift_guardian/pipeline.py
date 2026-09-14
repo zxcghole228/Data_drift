@@ -12,6 +12,8 @@ import numpy as np
 import pandas as pd
 from pandas.api.types import is_bool_dtype, is_numeric_dtype
 
+from .adversarial import adversarial_validate
+from .alerts import apply_multiple_testing, build_drift_alerts
 from .config import CONTRACT_VERSION, validate_config
 from .contracts import (
     AdversarialResult,
@@ -28,7 +30,14 @@ from .contracts import (
     SchemaResult,
     Status,
 )
-from .drift import build_probabilities, js_divergence, ks_test, psi, wasserstein
+from .drift import (
+    build_probabilities,
+    chi_square,
+    js_divergence,
+    ks_test,
+    psi,
+    wasserstein,
+)
 from .quality import check_quality
 from .schema import validate_schema
 
@@ -359,10 +368,9 @@ def _analyze_feature(
         elif method in stability:
             checks[method] = stability[method]
         elif method == "chi2":
-            checks[method] = _check_result(
-                "chi2",
-                "skipped",
-                "Категориальный χ² ещё не реализован",
+            checks[method] = _apply_p_value_rule(
+                chi_square(reference, current),
+                drift_config,
             )
 
     status, alert, reason = _summarize_feature(checks)
@@ -423,6 +431,8 @@ def _drift_result(
             drift_config=config["drift"],
         )
 
+    features = apply_multiple_testing(features, config["drift"])
+
     status = _highest_status([feature["status"] for feature in features.values()])
     failed_count = sum(feature["status"] == "error" for feature in features.values())
     skipped_count = sum(feature["status"] == "skipped" for feature in features.values())
@@ -446,21 +456,54 @@ def _drift_result(
     return {"status": status, "features": features, "reason": reason}
 
 
-def _adversarial_result(config: AnalysisConfig) -> AdversarialResult:
+def _adversarial_result(
+    reference: pd.DataFrame,
+    current: pd.DataFrame,
+    config: AnalysisConfig,
+    schema: SchemaResult,
+) -> AdversarialResult:
     enabled = config["adversarial"]["enabled"]
-    return {
-        "status": "skipped",
-        "roc_auc": None,
-        "fold_auc": [],
-        "feature_importance": {},
-        "importance_type": None,
-        "alert": None,
-        "reason": (
-            "Adversarial Validation ещё не реализован"
-            if enabled
-            else "Adversarial Validation отключён в конфигурации"
-        ),
+    if not enabled:
+        return {
+            "status": "skipped",
+            "roc_auc": None,
+            "threshold": config["adversarial"]["roc_auc_threshold"],
+            "fold_auc": [],
+            "feature_importance": {},
+            "importance_type": None,
+            "alert": None,
+            "reason": "Adversarial Validation отключён в конфигурации",
+        }
+
+    valid_features = list(schema["valid_features"])
+    settings: dict[str, Any] = {
+        **config["adversarial"],
+        "random_seed": config["random_seed"],
+        "feature_types": {
+            feature: config["schema"]["features"][feature]["kind"]
+            for feature in valid_features
+        },
     }
+    try:
+        return adversarial_validate(
+            reference.loc[:, valid_features],
+            current.loc[:, valid_features],
+            settings,
+        )
+    except (TypeError, ValueError) as exc:
+        return {
+            "status": "error",
+            "roc_auc": None,
+            "threshold": config["adversarial"]["roc_auc_threshold"],
+            "fold_auc": [],
+            "feature_importance": {},
+            "importance_type": None,
+            "alert": None,
+            "reason": (
+                "Не удалось подготовить Adversarial Validation: "
+                f"{type(exc).__name__}: {exc}"
+            ),
+        }
 
 
 def _schema_alerts(
@@ -559,15 +602,22 @@ def _quality_alerts(quality: QualityResult) -> list[Alert]:
     return alerts
 
 
-def _drift_alerts(drift: DriftResult) -> list[Alert]:
-    alerts: list[Alert] = []
-    for feature, feature_result in drift["features"].items():
-        alerts.extend(
-            _alert_from_check(check, source="drift", feature=feature)
-            for check in feature_result["checks"].values()
-            if check["alert"] is True
-        )
-    return alerts
+def _adversarial_alerts(result: AdversarialResult) -> list[Alert]:
+    if result["alert"] is not True:
+        return []
+    return [
+        {
+            "source": "adversarial",
+            "feature": None,
+            "check": "roc_auc",
+            "severity": "warning",
+            "message": (
+                f"roc_auc={result['roc_auc']:.6g}, "
+                f"threshold={result['threshold']:.6g}. "
+                f"{result['reason'] or 'Сработало настроенное правило'}"
+            ),
+        }
+    ]
 
 
 def _is_analyzed(feature: FeatureResult) -> bool:
@@ -607,12 +657,18 @@ def analyze(
     )
     quality = check_quality(reference, current, validated_config)
     drift = _drift_result(reference, current, validated_config, schema)
-    adversarial = _adversarial_result(validated_config)
+    adversarial = _adversarial_result(
+        reference,
+        current,
+        validated_config,
+        schema,
+    )
 
     alerts = [
         *_schema_alerts(reference, current, schema, validated_config),
         *_quality_alerts(quality),
-        *_drift_alerts(drift),
+        *build_drift_alerts(drift["features"], validated_config["drift"]),
+        *_adversarial_alerts(adversarial),
     ]
     feature_results = list(drift["features"].values())
     result: AnalysisResult = {
