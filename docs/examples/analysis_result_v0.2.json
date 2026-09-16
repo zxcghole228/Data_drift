@@ -1,0 +1,93 @@
+{
+  "contract_version": "0.2",
+  "effective_config": {
+    "contract_version": "0.2",
+    "random_seed": 42,
+    "schema": {
+      "allow_extra_columns": false,
+      "features": {
+        "age": {
+          "kind": "numeric",
+          "nullable": true
+        }
+      }
+    },
+    "quality": {
+      "max_missing_fraction": 0.1,
+      "max_missing_increase_pp": 5.0,
+      "max_duplicate_fraction": 0.01
+    },
+    "drift": {
+      "numeric_methods": ["wasserstein"],
+      "categorical_methods": [],
+      "alpha": 0.05,
+      "multiple_testing": "bh",
+      "n_bins": 10,
+      "psi_smoothing": 0.000001,
+      "js_base": 2.0,
+      "distance_thresholds": {
+        "wasserstein": null,
+        "psi": null,
+        "js": null
+      },
+      "feature_thresholds": {
+        "age": {
+          "wasserstein": 3.0
+        }
+      }
+    },
+    "adversarial": {
+      "enabled": false,
+      "n_splits": 3,
+      "roc_auc_threshold": null,
+      "exclude_columns": [],
+      "group_column": null
+    }
+  },
+  "metadata": {
+    "reference_rows": 1000,
+    "current_rows": 1000,
+    "random_seed": 42
+  },
+  "schema": {
+    "status": "ok",
+    "missing_columns": {"reference": [], "current": []},
+    "extra_columns": {"reference": [], "current": []},
+    "duplicate_columns": {"reference": [], "current": []},
+    "type_mismatches": [],
+    "valid_features": ["age"],
+    "reason": null
+  },
+  "quality": {
+    "status": "skipped",
+    "dataset_checks": [],
+    "feature_checks": {},
+    "reason": "Contract fixture: Data Quality calculations were not run."
+  },
+  "drift": {
+    "status": "skipped",
+    "features": {},
+    "reason": "Contract fixture: drift calculations were not run."
+  },
+  "adversarial": {
+    "status": "skipped",
+    "roc_auc": null,
+    "threshold": null,
+    "fold_auc": [],
+    "feature_importance": {},
+    "importance_type": null,
+    "split_strategy": "stratified_kfold",
+    "group_column": null,
+    "n_groups": null,
+    "alert": null,
+    "reason": "Contract fixture: Adversarial Validation was not run."
+  },
+  "alerts": [],
+  "summary": {
+    "status": "skipped",
+    "has_alerts": false,
+    "n_alerts": 0,
+    "analyzed_features": 0,
+    "skipped_features": 1
+  }
+}

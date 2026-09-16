@@ -1,7 +1,7 @@
 # Пример для синтетических данных, а не универсальная production-конфигурация.
 # Схема использует семантические типы. Например, int64 и float64 совместимы
 # с kind: numeric; фактический pandas dtype всё равно попадёт в отчёт.
-contract_version: "0.1"
+contract_version: "0.2"
 random_seed: 42
 
 schema:
@@ -40,9 +40,13 @@ drift:
     wasserstein: null
     psi: null
     js: null
+  # Частичные overrides по признакам. Пустое отображение сохраняет общие
+  # значения выше; явный null у признака отключает решение только для него.
+  feature_thresholds: {}
 
 adversarial:
   enabled: false
   n_splits: 3
   roc_auc_threshold: null
   exclude_columns: []
+  group_column: null

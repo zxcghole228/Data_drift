@@ -15,11 +15,11 @@ from pandas.api.types import is_bool_dtype, is_numeric_dtype
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import roc_auc_score
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
 
-from .contracts import AdversarialResult, FeatureType, Status
+from .contracts import AdversarialResult, FeatureType, SplitStrategy, Status
 
 _CONFIG_KEYS = frozenset(
     {
@@ -27,6 +27,7 @@ _CONFIG_KEYS = frozenset(
         "n_splits",
         "roc_auc_threshold",
         "exclude_columns",
+        "group_column",
         "random_seed",
         "feature_types",
     }
@@ -42,6 +43,9 @@ def _result(
     fold_auc: list[float] | None = None,
     feature_importance: dict[str, float] | None = None,
     importance_type: str | None = None,
+    split_strategy: SplitStrategy = "stratified_kfold",
+    group_column: str | None = None,
+    n_groups: int | None = None,
     alert: bool | None = None,
 ) -> AdversarialResult:
     return {
@@ -53,6 +57,9 @@ def _result(
             {} if feature_importance is None else feature_importance
         ),
         "importance_type": importance_type,
+        "split_strategy": split_strategy,
+        "group_column": group_column,
+        "n_groups": n_groups,
         "alert": alert,
         "reason": reason,
     }
@@ -73,7 +80,14 @@ def _require_dataframes(reference: object, current: object) -> None:
 
 def _config_values(
     config: Mapping[str, Any],
-) -> tuple[int, float | None, list[str], int, dict[str, FeatureType]]:
+) -> tuple[
+    int,
+    float | None,
+    list[str],
+    int,
+    dict[str, FeatureType],
+    str | None,
+]:
     if not isinstance(config, Mapping):
         raise TypeError("config должен быть отображением ключ-значение")
     unknown = sorted(str(key) for key in set(config) - _CONFIG_KEYS)
@@ -123,7 +137,20 @@ def _config_values(
             )
         feature_types[name] = cast(FeatureType, kind)
 
-    return normalized_splits, threshold, list(excluded), int(seed), feature_types
+    raw_group_column = config.get("group_column")
+    if raw_group_column is not None and (
+        not isinstance(raw_group_column, str) or not raw_group_column.strip()
+    ):
+        raise ValueError("group_column должен быть непустой строкой или None")
+
+    return (
+        normalized_splits,
+        threshold,
+        list(excluded),
+        int(seed),
+        feature_types,
+        raw_group_column,
+    )
 
 
 def _infer_type(series: pd.Series) -> FeatureType | None:
@@ -194,6 +221,83 @@ def _prepare_features(
         ]
     )
     return pd.DataFrame(prepared_columns), labels, types
+
+
+def _group_value(value: Any) -> str:
+    if isinstance(value, (list, dict, set, np.ndarray)):
+        raise ValueError("group_column не поддерживает вложенные идентификаторы")
+    python_value = value.item() if isinstance(value, np.generic) else value
+    return f"{type(python_value).__name__}:{python_value!r}"
+
+
+def _prepare_groups(
+    reference: pd.DataFrame,
+    current: pd.DataFrame,
+    group_column: str,
+) -> tuple[np.ndarray | None, int | None, str | None]:
+    missing_in = [
+        name
+        for name, frame in (("reference", reference), ("current", current))
+        if group_column not in frame.columns
+    ]
+    if missing_in:
+        return (
+            None,
+            None,
+            f"group_column {group_column!r} отсутствует в: {', '.join(missing_in)}",
+        )
+
+    reference_groups = reference[group_column]
+    current_groups = current[group_column]
+    if not isinstance(reference_groups, pd.Series) or not isinstance(
+        current_groups, pd.Series
+    ):
+        return None, None, f"Имя group_column {group_column!r} повторяется в таблице"
+    if reference_groups.isna().any() or current_groups.isna().any():
+        return (
+            None,
+            None,
+            f"group_column {group_column!r} содержит пропущенные идентификаторы",
+        )
+
+    try:
+        normalized = np.asarray(
+            [
+                _group_value(value)
+                for value in [
+                    *reference_groups.tolist(),
+                    *current_groups.tolist(),
+                ]
+            ],
+            dtype=object,
+        )
+    except (TypeError, ValueError) as exc:
+        return None, None, str(exc)
+    return normalized, len(set(normalized.tolist())), None
+
+
+def _split_indices(
+    features: pd.DataFrame,
+    labels: np.ndarray,
+    *,
+    groups: np.ndarray | None,
+    n_splits: int,
+    seed: int,
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    if groups is None:
+        splitter = StratifiedKFold(
+            n_splits=n_splits,
+            shuffle=True,
+            random_state=seed,
+        )
+        return list(splitter.split(features, labels))
+
+    splitter = StratifiedGroupKFold(
+        n_splits=n_splits,
+        shuffle=True,
+        random_state=seed,
+    )
+    return list(splitter.split(features, labels, groups))
 
 
 def _build_pipeline(
@@ -295,12 +399,26 @@ def adversarial_validate(
     """
 
     _require_dataframes(reference, current)
-    n_splits, threshold, excluded, seed, configured_types = _config_values(config)
+    (
+        n_splits,
+        threshold,
+        excluded,
+        seed,
+        configured_types,
+        group_column,
+    ) = _config_values(config)
+    split_strategy: SplitStrategy = (
+        "stratified_group_kfold"
+        if group_column is not None
+        else "stratified_kfold"
+    )
     if reference.empty or current.empty:
         return _result(
             "skipped",
             "Adversarial Validation требует непустые Reference и Current",
             threshold=threshold,
+            split_strategy=split_strategy,
+            group_column=group_column,
         )
     if len(reference) < n_splits or len(current) < n_splits:
         return _result(
@@ -308,12 +426,56 @@ def adversarial_validate(
             f"Для n_splits={n_splits} требуется не меньше {n_splits} строк "
             "каждого источника",
             threshold=threshold,
+            split_strategy=split_strategy,
+            group_column=group_column,
         )
+
+    groups: np.ndarray | None = None
+    n_groups: int | None = None
+    if group_column is not None:
+        groups, n_groups, group_reason = _prepare_groups(
+            reference,
+            current,
+            group_column,
+        )
+        if group_reason is not None or groups is None or n_groups is None:
+            return _result(
+                "skipped",
+                group_reason or "Не удалось подготовить группы",
+                threshold=threshold,
+                split_strategy=split_strategy,
+                group_column=group_column,
+                n_groups=n_groups,
+            )
+        reference_group_count = len(set(groups[: len(reference)].tolist()))
+        current_group_count = len(set(groups[len(reference) :].tolist()))
+        if (
+            n_groups < n_splits
+            or reference_group_count < n_splits
+            or current_group_count < n_splits
+        ):
+            return _result(
+                "skipped",
+                f"Для n_splits={n_splits} недостаточно групп: "
+                f"всего={n_groups}, reference={reference_group_count}, "
+                f"current={current_group_count}",
+                threshold=threshold,
+                split_strategy=split_strategy,
+                group_column=group_column,
+                n_groups=n_groups,
+            )
 
     features, labels, feature_types = _prepare_features(
         reference,
         current,
-        excluded=excluded,
+        excluded=[
+            *excluded,
+            *(
+                [group_column]
+                if group_column is not None and group_column not in excluded
+                else []
+            ),
+        ],
         configured_types=configured_types,
     )
     if features.shape[1] == 0:
@@ -321,16 +483,49 @@ def adversarial_validate(
             "skipped",
             "После исключений и проверки типов не осталось подходящих признаков",
             threshold=threshold,
+            split_strategy=split_strategy,
+            group_column=group_column,
+            n_groups=n_groups,
         )
 
-    splitter = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
     oof_predictions = np.full(len(labels), np.nan, dtype=np.float64)
     fold_auc: list[float] = []
     importance_accumulator = {feature: 0.0 for feature in feature_types}
 
     try:
+        splits = _split_indices(
+            features,
+            labels,
+            groups=groups,
+            n_splits=n_splits,
+            seed=seed,
+        )
+        for train_indices, validation_indices in splits:
+            if len(np.unique(labels[train_indices])) < 2 or len(
+                np.unique(labels[validation_indices])
+            ) < 2:
+                return _result(
+                    "skipped",
+                    "Невозможно получить оба класса источника в каждом train/validation fold",
+                    threshold=threshold,
+                    split_strategy=split_strategy,
+                    group_column=group_column,
+                    n_groups=n_groups,
+                )
+            if groups is not None and set(groups[train_indices]) & set(
+                groups[validation_indices]
+            ):
+                return _result(
+                    "error",
+                    "Внутренняя ошибка: группы пересекаются между train и validation",
+                    threshold=threshold,
+                    split_strategy=split_strategy,
+                    group_column=group_column,
+                    n_groups=n_groups,
+                )
+
         for fold_index, (train_indices, validation_indices) in enumerate(
-            splitter.split(features, labels)
+            splits
         ):
             pipeline, transformer_features = _build_pipeline(
                 feature_types,
@@ -354,6 +549,9 @@ def adversarial_validate(
             "error",
             f"Не удалось выполнить Adversarial Validation: {type(exc).__name__}: {exc}",
             threshold=threshold,
+            split_strategy=split_strategy,
+            group_column=group_column,
+            n_groups=n_groups,
         )
 
     if not np.isfinite(oof_predictions).all():
@@ -361,6 +559,9 @@ def adversarial_validate(
             "error",
             "Не для всех строк получено отложенное предсказание",
             threshold=threshold,
+            split_strategy=split_strategy,
+            group_column=group_column,
+            n_groups=n_groups,
         )
 
     overall_auc = float(roc_auc_score(labels, oof_predictions))
@@ -397,5 +598,8 @@ def adversarial_validate(
         fold_auc=[float(value) for value in fold_auc],
         feature_importance=ordered_importance,
         importance_type="mean_normalized_gain_across_folds",
+        split_strategy=split_strategy,
+        group_column=group_column,
+        n_groups=n_groups,
         alert=alert,
     )

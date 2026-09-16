@@ -32,6 +32,12 @@ def test_known_table_matches_scipy_without_yates_correction() -> None:
     assert result["value"] == pytest.approx(expected.statistic)
     assert result["p_value"] == pytest.approx(expected.pvalue)
     assert result["details"]["degrees_of_freedom"] == 2
+    expected_v = np.sqrt(expected.statistic / 100)
+    assert result["details"]["cramers_v"] == pytest.approx(expected_v)
+    assert (
+        result["details"]["cramers_v_decision"]
+        == "diagnostic_only_no_threshold"
+    )
     assert result["alert"] is None
 
 
@@ -44,6 +50,7 @@ def test_equal_proportions_have_zero_statistic() -> None:
     assert result["status"] == "ok"
     assert result["value"] == pytest.approx(0.0)
     assert result["p_value"] == pytest.approx(1.0)
+    assert result["details"]["cramers_v"] == pytest.approx(0.0)
 
 
 def test_clear_proportion_shift_has_small_p_value() -> None:
@@ -55,6 +62,7 @@ def test_clear_proportion_shift_has_small_p_value() -> None:
     assert result["status"] == "ok"
     assert result["p_value"] is not None
     assert result["p_value"] < 1e-20
+    assert result["details"]["cramers_v"] > 0.75
 
 
 def test_missing_values_are_excluded_and_reported() -> None:
@@ -83,6 +91,30 @@ def test_rare_categories_are_pooled_by_combined_count() -> None:
         "str:'r2'",
     }
     assert result["details"]["observed_counts"]["reference"][-1] == 6
+    assert result["details"]["original_category_count"] == 4
+    assert result["details"]["effective_category_count"] == 3
+    assert result["details"]["pooled_category_count"] == 2
+    assert result["details"]["pooled_observation_fraction"] == pytest.approx(
+        {
+            "reference": 6 / 106,
+            "current": 6 / 106,
+            "combined": 12 / 212,
+        }
+    )
+
+
+def test_new_and_disappeared_categories_are_reported_before_skip() -> None:
+    result = chi_square(
+        _series({"stable": 30, "gone": 20}),
+        _series({"stable": 30, "new": 20}),
+    )
+
+    assert result["status"] == "skipped"
+    assert result["details"]["new_category_count"] == 1
+    assert result["details"]["new_categories"] == ["str:'new'"]
+    assert result["details"]["disappeared_category_count"] == 1
+    assert result["details"]["disappeared_categories"] == ["str:'gone'"]
+    assert result["details"]["cramers_v"] is None
 
 
 def test_sparse_table_is_skipped_instead_of_returning_unreliable_p_value() -> None:
@@ -114,6 +146,7 @@ def test_single_effective_category_is_skipped() -> None:
 
     assert result["status"] == "skipped"
     assert "меньше двух категорий" in str(result["reason"])
+    assert result["details"]["cramers_v"] is None
 
 
 def test_type_aware_categories_do_not_merge_string_and_integer() -> None:
