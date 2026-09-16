@@ -14,8 +14,9 @@ Adversarial Validation возвращает OOF ROC-AUC по LightGBM, знач�
 загружает две таблицы и YAML-конфигурацию, показывает статусы, проверки,
 алерты, ML-результат и сопоставимые распределения. Командный интерфейс запускает
 тот же анализ для локальных CSV/Parquet и атомарно сохраняет полный результат
-контракта 0.2 в JSON. Экспорт итогового отчёта пока остаётся незавершённым
-требованием к 27.09.
+контракта 0.2 в JSON и необязательный автономный HTML с теми же статусами,
+порогами и интерактивными распределениями. Итоговый текст проекта, Docker-smoke
+test и скринкаст пока остаются незавершёнными требованиями к 27.09.
 
 Цель первой недели — первый совместный проход данных через систему и проверка основных модулей. Это промежуточный результат, а не финальная сдача.
 
@@ -120,7 +121,8 @@ python -m data_drift_guardian \
   --reference data/generated/none/reference.csv \
   --current data/generated/none/current.csv \
   --config configs/default.yaml \
-  --json-output outputs/cli/none.json
+  --json-output outputs/html/none.json \
+  --html-output outputs/html/none.html
 ```
 
 Сценарий с комбинированным сдвигом и ненулевым кодом при алерте:
@@ -130,15 +132,19 @@ python -m data_drift_guardian \
   --reference data/generated/combined/reference.parquet \
   --current data/generated/combined/current.parquet \
   --config configs/default.yaml \
-  --json-output outputs/cli/combined.json \
+  --json-output outputs/html/combined.json \
+  --html-output outputs/html/combined.html \
   --fail-on-alert
 ```
 
 CLI возвращает `0`, если анализ выполнен; `1` при ошибке запуска; `2`, если
 анализ выполнен с алертами и передан `--fail-on-alert`. Без этого флага
 бизнес-алерт не считается ошибкой программы. Существующий JSON защищён от
-случайной замены; для явной перезаписи используется `--overwrite`. Полный
-контракт и политика атомарной записи описаны в [docs/cli.md](docs/cli.md).
+случайной замены; та же политика действует для HTML, а для явной перезаписи
+используется `--overwrite`. HTML включает Plotly JS внутрь файла, открывается
+офлайн без Python-сервера и в проверенных demo-сценариях занимает около 4.8 МБ.
+Полный контракт и политика атомарной записи описаны в
+[docs/cli.md](docs/cli.md).
 
 Основной библиотечный API:
 
@@ -190,8 +196,8 @@ python -m pytest
 ```
 
 Unit- и integration-тесты покрывают генератор, загрузку, конфигурацию, схему,
-Data Quality, доступные статистические методы, общий pipeline, CLI, графики и
-основные сценарии Streamlit-интерфейса. План проверок находится в
+Data Quality, доступные статистические методы, общий pipeline, CLI, автономный
+HTML, графики и основные сценарии Streamlit-интерфейса. План проверок находится в
 [tests/README.md](tests/README.md).
 
 Демонстрационный notebook запускается из корня проекта:

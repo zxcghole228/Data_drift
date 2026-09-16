@@ -108,6 +108,7 @@ def test_module_help_is_available() -> None:
     assert completed.returncode == cli.EXIT_SUCCESS
     assert "--reference" in completed.stdout
     assert "--json-output" in completed.stdout
+    assert "--html-output" in completed.stdout
     assert completed.stderr == ""
 
 
@@ -318,3 +319,126 @@ def test_serialization_failure_keeps_existing_file(
     assert exit_code == cli.EXIT_ERROR
     assert output_path.read_text(encoding="utf-8") == "не заменять"
     assert not list(tmp_path.glob(".result.json.*.tmp"))
+
+
+def test_cli_writes_json_and_html_after_single_analysis(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reference_path, current_path = _write_tables(tmp_path, file_format="csv")
+    json_output = tmp_path / "outputs" / "result.json"
+    html_output = tmp_path / "outputs" / "report.html"
+    original_analyze = cli.analyze
+    calls = 0
+
+    def counting_analyze(*args: object, **kwargs: object) -> AnalysisResult:
+        nonlocal calls
+        calls += 1
+        return original_analyze(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(cli, "analyze", counting_analyze)
+
+    exit_code = cli.main(
+        _arguments(
+            reference_path,
+            current_path,
+            json_output,
+            extra=["--html-output", str(html_output)],
+        )
+    )
+
+    captured = capsys.readouterr()
+    html_content = html_output.read_text(encoding="utf-8")
+    assert exit_code == cli.EXIT_SUCCESS
+    assert calls == 1
+    assert _read_strict_json(json_output)["contract_version"] == "0.2"
+    assert html_content.startswith("<!doctype html>")
+    assert "Plotly.newPlot" in html_content
+    assert str(json_output) in captured.out
+    assert str(html_output) in captured.out
+    assert captured.err == ""
+
+
+def test_existing_html_is_rejected_before_analysis(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reference_path, current_path = _write_tables(tmp_path, file_format="csv")
+    json_output = tmp_path / "result.json"
+    html_output = tmp_path / "report.html"
+    html_output.write_text("исходный HTML", encoding="utf-8")
+    calls = 0
+
+    def unexpected_analyze(*args: object, **kwargs: object) -> AnalysisResult:
+        nonlocal calls
+        calls += 1
+        raise AssertionError("analyze не должен запускаться")
+
+    monkeypatch.setattr(cli, "analyze", unexpected_analyze)
+
+    exit_code = cli.main(
+        _arguments(
+            reference_path,
+            current_path,
+            json_output,
+            extra=["--html-output", str(html_output)],
+        )
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == cli.EXIT_ERROR
+    assert calls == 0
+    assert not json_output.exists()
+    assert html_output.read_text(encoding="utf-8") == "исходный HTML"
+    assert "--overwrite" in captured.err
+
+
+def test_json_and_html_output_paths_must_differ(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    reference_path, current_path = _write_tables(tmp_path, file_format="csv")
+    output_path = tmp_path / "same-output"
+
+    exit_code = cli.main(
+        _arguments(
+            reference_path,
+            current_path,
+            output_path,
+            extra=["--html-output", str(output_path)],
+        )
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == cli.EXIT_ERROR
+    assert not output_path.exists()
+    assert "должны различаться" in captured.err
+
+
+def test_overwrite_replaces_existing_json_and_html(
+    tmp_path: Path,
+) -> None:
+    reference_path, current_path = _write_tables(tmp_path, file_format="parquet")
+    json_output = tmp_path / "result.json"
+    html_output = tmp_path / "report.html"
+    json_output.write_text("старый JSON", encoding="utf-8")
+    html_output.write_text("старый HTML", encoding="utf-8")
+
+    exit_code = cli.main(
+        _arguments(
+            reference_path,
+            current_path,
+            json_output,
+            extra=[
+                "--html-output",
+                str(html_output),
+                "--overwrite",
+            ],
+        )
+    )
+
+    assert exit_code == cli.EXIT_SUCCESS
+    assert _read_strict_json(json_output)["contract_version"] == "0.2"
+    assert html_output.read_text(encoding="utf-8").startswith("<!doctype html>")

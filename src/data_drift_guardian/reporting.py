@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 import ast
+import html
+import json
+import os
 from pathlib import Path
+from tempfile import NamedTemporaryFile
+from typing import Any
 
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from pandas.api.types import is_bool_dtype, is_numeric_dtype
+from plotly.io import to_html
+from plotly.offline import get_plotlyjs
 
 from .contracts import AnalysisResult, FeatureType
 
@@ -16,6 +23,103 @@ from .contracts import AnalysisResult, FeatureType
 REFERENCE_COLOR = "#2563EB"
 CURRENT_COLOR = "#F97316"
 MAX_NUMERIC_BINS = 30
+
+STATUS_LABELS = {
+    "ok": "Успешно",
+    "warning": "Предупреждение",
+    "critical": "Критическая проблема",
+    "skipped": "Проверка пропущена",
+    "error": "Ошибка",
+}
+
+REPORT_STYLES = """
+:root {
+  color-scheme: light;
+  --background: #f8fafc;
+  --surface: #ffffff;
+  --border: #cbd5e1;
+  --text: #0f172a;
+  --muted: #475569;
+  --ok: #166534;
+  --ok-bg: #dcfce7;
+  --warning: #92400e;
+  --warning-bg: #fef3c7;
+  --critical: #991b1b;
+  --critical-bg: #fee2e2;
+  --skipped: #334155;
+  --skipped-bg: #e2e8f0;
+  --error: #991b1b;
+  --error-bg: #fee2e2;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--text);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+  line-height: 1.5;
+}
+main { width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 32px 0 64px; }
+h1, h2, h3 { line-height: 1.2; }
+h1 { margin-bottom: 8px; }
+h2 { margin-top: 36px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+.muted { color: var(--muted); }
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  margin: 16px 0;
+  padding: 20px;
+  overflow-x: auto;
+}
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+}
+.summary-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+}
+.summary-card strong { display: block; font-size: 1.35rem; margin-top: 4px; }
+.badge {
+  border-radius: 999px;
+  display: inline-block;
+  font-weight: 700;
+  padding: 4px 10px;
+}
+.status-ok { color: var(--ok); background: var(--ok-bg); }
+.status-warning { color: var(--warning); background: var(--warning-bg); }
+.status-critical { color: var(--critical); background: var(--critical-bg); }
+.status-skipped { color: var(--skipped); background: var(--skipped-bg); }
+.status-error { color: var(--error); background: var(--error-bg); }
+table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+th, td { border-bottom: 1px solid var(--border); padding: 9px 10px; text-align: left; vertical-align: top; }
+th { background: #f1f5f9; white-space: nowrap; }
+td.preformatted { min-width: 220px; white-space: pre-wrap; word-break: break-word; }
+pre {
+  background: #0f172a;
+  border-radius: 8px;
+  color: #e2e8f0;
+  margin: 8px 0 0;
+  overflow-x: auto;
+  padding: 14px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.alert { border-left: 5px solid var(--warning); }
+.alert-critical { border-left-color: var(--critical); }
+.plot { min-height: 420px; }
+.empty { color: var(--muted); font-style: italic; }
+@media print {
+  body { background: #ffffff; }
+  main { width: 100%; padding: 0; }
+  .panel, .summary-card { break-inside: avoid; box-shadow: none; }
+}
+"""
 
 
 def distribution_figure(
@@ -323,6 +427,537 @@ def _add_exclusion_note(figure: go.Figure, text: str) -> None:
     )
 
 
-def export_html(result: AnalysisResult, output_path: str | Path) -> Path:
-    """Экспорт отчёта — итоговое требование; реализация пока не запланирована по дням."""
-    raise NotImplementedError("HTML-экспорт отмечен в docs/deliverables.md")
+def _format_value(value: object) -> str:
+    if value is None:
+        return "—"
+    if isinstance(value, bool):
+        return "да" if value else "нет"
+    if isinstance(value, float):
+        return f"{value:.6g}"
+    return str(value)
+
+
+def _escape(value: object) -> str:
+    return html.escape(_format_value(value), quote=True)
+
+
+def _json_text(value: object) -> str:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        indent=2,
+        allow_nan=False,
+    )
+
+
+def _status_badge(status: object) -> str:
+    status_text = str(status)
+    css_status = status_text if status_text in STATUS_LABELS else "skipped"
+    label = STATUS_LABELS.get(status_text, status_text)
+    return (
+        f'<span class="badge status-{css_status}">'
+        f"{_escape(label)} ({_escape(status_text)})</span>"
+    )
+
+
+def _reason_html(reason: object) -> str:
+    if reason is None or reason == "":
+        return ""
+    return f'<p><strong>Причина:</strong> {_escape(reason)}</p>'
+
+
+def _render_table(headers: list[str], rows: list[list[object]]) -> str:
+    if not rows:
+        return '<p class="empty">Нет данных для отображения.</p>'
+
+    header_html = "".join(f"<th>{_escape(header)}</th>" for header in headers)
+    body_rows: list[str] = []
+    for row in rows:
+        cells: list[str] = []
+        for value in row:
+            text = _format_value(value)
+            css_class = ' class="preformatted"' if "\n" in text else ""
+            cells.append(f"<td{css_class}>{html.escape(text, quote=True)}</td>")
+        body_rows.append(f"<tr>{''.join(cells)}</tr>")
+
+    return (
+        "<table><thead><tr>"
+        f"{header_html}"
+        "</tr></thead><tbody>"
+        f"{''.join(body_rows)}"
+        "</tbody></table>"
+    )
+
+
+def _render_summary(result: AnalysisResult) -> str:
+    summary = result["summary"]
+    metadata = result["metadata"]
+    cards = [
+        ("Строк Reference", metadata["reference_rows"]),
+        ("Строк Current", metadata["current_rows"]),
+        ("Проанализировано признаков", summary["analyzed_features"]),
+        ("Пропущено признаков", summary["skipped_features"]),
+        ("Алертов", summary["n_alerts"]),
+        ("Random seed", metadata["random_seed"]),
+    ]
+    card_html = "".join(
+        (
+            '<div class="summary-card">'
+            f'<span class="muted">{_escape(label)}</span>'
+            f"<strong>{_escape(value)}</strong>"
+            "</div>"
+        )
+        for label, value in cards
+    )
+    return (
+        '<section id="summary">'
+        "<h2>Сводка</h2>"
+        '<div class="panel">'
+        f"<p>{_status_badge(summary['status'])}</p>"
+        f'<p class="muted">Версия контракта: {_escape(result["contract_version"])}</p>'
+        "</div>"
+        f'<div class="summary-grid">{card_html}</div>'
+        "</section>"
+    )
+
+
+def _render_alerts(result: AnalysisResult) -> str:
+    alerts = result["alerts"]
+    if not alerts:
+        content = '<div class="panel"><p>Алертов нет.</p></div>'
+    else:
+        rendered: list[str] = []
+        for alert in alerts:
+            severity = alert["severity"]
+            extra_class = " alert-critical" if severity == "critical" else ""
+            feature = (
+                f" · признак {_escape(alert['feature'])}"
+                if alert["feature"] is not None
+                else ""
+            )
+            rendered.append(
+                f'<article class="panel alert{extra_class}">'
+                f"<strong>{_escape(alert['source'])} / "
+                f"{_escape(alert['check'])}{feature}</strong>"
+                f"<p>{_escape(alert['message'])}</p>"
+                f'<span class="muted">Критичность: {_escape(severity)}</span>'
+                "</article>"
+            )
+        content = "".join(rendered)
+    return f'<section id="alerts"><h2>Алерты</h2>{content}</section>'
+
+
+def _render_schema(result: AnalysisResult) -> str:
+    schema = result["schema"]
+    column_rows: list[list[object]] = []
+    for issue_name, issue_label in (
+        ("missing_columns", "Отсутствующие колонки"),
+        ("extra_columns", "Лишние колонки"),
+        ("duplicate_columns", "Повторяющиеся колонки"),
+    ):
+        for dataset, columns in schema[issue_name].items():
+            if columns:
+                column_rows.append([issue_label, dataset, ", ".join(columns)])
+
+    mismatch_rows = [
+        [
+            mismatch["column"],
+            mismatch["dataset"],
+            mismatch["expected"],
+            mismatch["actual"],
+        ]
+        for mismatch in schema["type_mismatches"]
+    ]
+    valid_features = ", ".join(schema["valid_features"]) or "—"
+    return (
+        '<section id="schema"><h2>Schema Validation</h2><div class="panel">'
+        f"<p>{_status_badge(schema['status'])}</p>"
+        f"{_reason_html(schema['reason'])}"
+        f"<p><strong>Допустимые признаки:</strong> {_escape(valid_features)}</p>"
+        "<h3>Колонки</h3>"
+        f"{_render_table(['Нарушение', 'Выборка', 'Колонки'], column_rows)}"
+        "<h3>Несовместимые типы</h3>"
+        f"{_render_table(['Колонка', 'Выборка', 'Ожидалось', 'Получено'], mismatch_rows)}"
+        "</div></section>"
+    )
+
+
+def _check_row(source: str, feature: str | None, check: dict[str, Any]) -> list[object]:
+    details = check["details"]
+    return [
+        source,
+        feature or "—",
+        check["name"],
+        check["status"],
+        _format_value(check["value"]),
+        _format_value(check["threshold"]),
+        _format_value(check["p_value"]),
+        _format_value(check["adjusted_p_value"]),
+        _format_value(check["alert"]),
+        check["reason"] or "—",
+        details.get("threshold_source", "—"),
+        _format_value(details.get("cramers_v")),
+        _format_value(details.get("new_category_count")),
+        _format_value(details.get("disappeared_category_count")),
+        _format_value(details.get("pooled_category_count")),
+        _format_value(details.get("pooled_observation_fraction")),
+        _json_text(details),
+    ]
+
+
+CHECK_HEADERS = [
+    "Источник",
+    "Признак",
+    "Проверка",
+    "Статус",
+    "Значение",
+    "Порог",
+    "p-value",
+    "Скорр. p-value",
+    "Алерт",
+    "Причина",
+    "Источник порога",
+    "Cramér's V",
+    "Новых категорий",
+    "Исчезнувших категорий",
+    "Pooled-категорий",
+    "Доля pooled-наблюдений",
+    "Детали",
+]
+
+
+def _render_quality(result: AnalysisResult) -> str:
+    quality = result["quality"]
+    rows = [
+        _check_row("quality", None, check)
+        for check in quality["dataset_checks"]
+    ]
+    for feature, checks in quality["feature_checks"].items():
+        rows.extend(_check_row("quality", feature, check) for check in checks)
+
+    return (
+        '<section id="quality"><h2>Data Quality</h2><div class="panel">'
+        f"<p>{_status_badge(quality['status'])}</p>"
+        f"{_reason_html(quality['reason'])}"
+        f"{_render_table(CHECK_HEADERS, rows)}"
+        "</div></section>"
+    )
+
+
+def _render_drift(result: AnalysisResult) -> str:
+    drift = result["drift"]
+    feature_rows: list[list[object]] = []
+    check_rows: list[list[object]] = []
+    for feature, feature_result in drift["features"].items():
+        feature_rows.append(
+            [
+                feature,
+                feature_result["feature_type"],
+                feature_result["status"],
+                feature_result["n_reference_valid"],
+                feature_result["n_current_valid"],
+                _format_value(feature_result["alert"]),
+                feature_result["reason"] or "—",
+            ]
+        )
+        check_rows.extend(
+            _check_row("drift", feature, check)
+            for check in feature_result["checks"].values()
+        )
+
+    return (
+        '<section id="drift"><h2>Data Drift</h2><div class="panel">'
+        f"<p>{_status_badge(drift['status'])}</p>"
+        f"{_reason_html(drift['reason'])}"
+        "<h3>Сводка по признакам</h3>"
+        f"{_render_table(['Признак', 'Тип', 'Статус', 'Reference valid', 'Current valid', 'Алерт', 'Причина'], feature_rows)}"
+        "<h3>Метрики</h3>"
+        f"{_render_table(CHECK_HEADERS, check_rows)}"
+        "</div></section>"
+    )
+
+
+def _render_adversarial(result: AnalysisResult) -> str:
+    adversarial = result["adversarial"]
+    overview_rows = [
+        ["Статус", adversarial["status"]],
+        ["ROC-AUC", _format_value(adversarial["roc_auc"])],
+        ["Порог", _format_value(adversarial["threshold"])],
+        ["Алерт", _format_value(adversarial["alert"])],
+        ["Стратегия split", adversarial["split_strategy"]],
+        ["Group column", _format_value(adversarial["group_column"])],
+        ["Количество групп", _format_value(adversarial["n_groups"])],
+        ["Тип importance", _format_value(adversarial["importance_type"])],
+    ]
+    fold_rows = [
+        [index, value]
+        for index, value in enumerate(adversarial["fold_auc"], start=1)
+    ]
+    importance_rows = sorted(
+        ([feature, value] for feature, value in adversarial["feature_importance"].items()),
+        key=lambda row: float(row[1]),
+        reverse=True,
+    )
+    return (
+        '<section id="adversarial"><h2>Adversarial Validation</h2>'
+        '<div class="panel">'
+        f"<p>{_status_badge(adversarial['status'])}</p>"
+        f"{_reason_html(adversarial['reason'])}"
+        f"{_render_table(['Поле', 'Значение'], overview_rows)}"
+        "<h3>ROC-AUC по фолдам</h3>"
+        f"{_render_table(['Фолд', 'ROC-AUC'], fold_rows)}"
+        "<h3>Важности признаков</h3>"
+        f"{_render_table(['Признак', 'Важность'], importance_rows)}"
+        "</div></section>"
+    )
+
+
+def _render_effective_config(result: AnalysisResult) -> str:
+    config = html.escape(_json_text(result["effective_config"]), quote=True)
+    return (
+        '<section id="config"><h2>Фактически применённая конфигурация</h2>'
+        f'<div class="panel"><pre>{config}</pre></div></section>'
+    )
+
+
+def _escape_figure_labels(figure: go.Figure, feature_type: FeatureType) -> None:
+    """Экранировать только пользовательские подписи, сохранив Plotly-шаблоны."""
+
+    if figure.layout.title.text is not None:
+        figure.layout.title.text = html.escape(
+            str(figure.layout.title.text), quote=True
+        )
+    if figure.layout.xaxis.title.text is not None:
+        figure.layout.xaxis.title.text = html.escape(
+            str(figure.layout.xaxis.title.text), quote=True
+        )
+    if feature_type == "categorical":
+        for trace in figure.data:
+            trace.x = tuple(html.escape(str(value), quote=True) for value in trace.x)
+
+
+def _render_distributions(
+    result: AnalysisResult,
+    reference: pd.DataFrame | None,
+    current: pd.DataFrame | None,
+) -> tuple[str, bool]:
+    if reference is None or current is None:
+        return (
+            '<section id="distributions"><h2>Распределения</h2>'
+            '<div class="panel"><p class="empty">'
+            "Графики не включены: Reference и Current не были переданы в экспорт."
+            "</p></div></section>",
+            False,
+        )
+
+    figures: list[str] = []
+    for index, (feature, feature_result) in enumerate(
+        result["drift"]["features"].items(), start=1
+    ):
+        if feature not in reference.columns or feature not in current.columns:
+            figures.append(
+                '<article class="panel">'
+                f"<h3>{_escape(feature)}</h3>"
+                '<p class="empty">График недоступен: признак отсутствует в одной '
+                "из переданных таблиц.</p></article>"
+            )
+            continue
+
+        feature_type = feature_result["feature_type"]
+        try:
+            figure = distribution_figure(
+                reference[feature],
+                current[feature],
+                feature_type,
+            )
+        except (TypeError, ValueError) as exc:
+            figures.append(
+                '<article class="panel">'
+                f"<h3>{_escape(feature)}</h3>"
+                f'<p class="empty">График недоступен: {_escape(exc)}</p>'
+                "</article>"
+            )
+            continue
+
+        _escape_figure_labels(figure, feature_type)
+        fragment = to_html(
+            figure,
+            full_html=False,
+            include_plotlyjs=False,
+            div_id=f"distribution-{index}",
+            config={"displaylogo": False, "responsive": True},
+        )
+        figures.append(
+            '<article class="panel plot">'
+            f"<h3>{_escape(feature)}</h3>{fragment}</article>"
+        )
+
+    if not figures:
+        figures.append(
+            '<div class="panel"><p class="empty">'
+            "Нет признаков для построения распределений.</p></div>"
+        )
+    has_plot = any("Plotly.newPlot" in figure for figure in figures)
+    return (
+        '<section id="distributions"><h2>Распределения</h2>'
+        f"{''.join(figures)}</section>",
+        has_plot,
+    )
+
+
+def _validate_report_inputs(
+    result: object,
+    reference: object,
+    current: object,
+) -> None:
+    if not isinstance(result, dict):
+        raise TypeError(
+            "result должен быть словарём AnalysisResult, "
+            f"получен {type(result).__name__}"
+        )
+    if (reference is None) != (current is None):
+        raise ValueError(
+            "Для графиков необходимо передать одновременно reference и current"
+        )
+    if reference is not None and not isinstance(reference, pd.DataFrame):
+        raise TypeError(
+            "reference должен иметь тип pandas.DataFrame, "
+            f"получен {type(reference).__name__}"
+        )
+    if current is not None and not isinstance(current, pd.DataFrame):
+        raise TypeError(
+            "current должен иметь тип pandas.DataFrame, "
+            f"получен {type(current).__name__}"
+        )
+
+
+def _build_html_document(
+    result: AnalysisResult,
+    *,
+    reference: pd.DataFrame | None,
+    current: pd.DataFrame | None,
+) -> str:
+    _validate_report_inputs(result, reference, current)
+    distributions, has_plot = _render_distributions(result, reference, current)
+    plotly_script = (
+        f'<script id="plotly-library">{get_plotlyjs()}</script>' if has_plot else ""
+    )
+    body = "".join(
+        (
+            _render_summary(result),
+            _render_alerts(result),
+            _render_schema(result),
+            _render_quality(result),
+            _render_drift(result),
+            _render_adversarial(result),
+            _render_effective_config(result),
+            distributions,
+        )
+    )
+    return (
+        "<!doctype html>\n"
+        '<html lang="ru"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        "<title>Data Drift Guardian — отчёт</title>"
+        f"<style>{REPORT_STYLES}</style>{plotly_script}</head>"
+        "<body><main><header><h1>Data Drift Guardian</h1>"
+        '<p class="muted">Автономный отчёт по качеству данных и сдвигу распределений.</p>'
+        f"</header>{body}</main></body></html>"
+    )
+
+
+def _prepare_output_path(path: str | Path, *, overwrite: bool) -> Path:
+    if not isinstance(path, (str, Path)):
+        raise TypeError(
+            "output_path должен иметь тип str или pathlib.Path, "
+            f"получен {type(path).__name__}"
+        )
+    output_path = Path(path).expanduser()
+    if output_path.exists():
+        if output_path.is_dir():
+            raise IsADirectoryError(
+                f"Путь HTML-отчёта указывает на директорию: {output_path}"
+            )
+        if not output_path.is_file():
+            raise ValueError(
+                f"Путь HTML-отчёта не является обычным файлом: {output_path}"
+            )
+        if not overwrite:
+            raise FileExistsError(
+                f"HTML-отчёт уже существует: {output_path}. "
+                "Передайте overwrite=True для замены."
+            )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if not output_path.parent.is_dir():
+        raise NotADirectoryError(
+            "Родительский путь HTML-отчёта не является директорией: "
+            f"{output_path.parent}"
+        )
+    return output_path
+
+
+def _write_text_atomic(content: str, output_path: Path) -> None:
+    temporary_path: Path | None = None
+    try:
+        with NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="\n",
+            prefix=f".{output_path.name}.",
+            suffix=".tmp",
+            dir=output_path.parent,
+            delete=False,
+        ) as temporary_file:
+            temporary_path = Path(temporary_file.name)
+            temporary_file.write(content)
+            temporary_file.write("\n")
+            temporary_file.flush()
+            os.fsync(temporary_file.fileno())
+
+        os.replace(temporary_path, output_path)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+
+
+def export_html(
+    result: AnalysisResult,
+    output_path: str | Path,
+    *,
+    reference: pd.DataFrame | None = None,
+    current: pd.DataFrame | None = None,
+    overwrite: bool = False,
+) -> Path:
+    """Создать автономный HTML-отчёт из готового ``AnalysisResult``.
+
+    Статистические показатели берутся только из ``result`` и не вычисляются
+    повторно. Исходные DataFrame необязательны и используются исключительно
+    для построения сопоставимых Plotly-распределений.
+
+    Args:
+        result: Полный JSON-безопасный результат ``analyze``.
+        output_path: Путь создаваемого HTML-файла.
+        reference: Необязательная эталонная таблица для графиков.
+        current: Необязательная текущая таблица для графиков.
+        overwrite: Разрешить атомарную замену существующего файла.
+
+    Returns:
+        Фактический путь записанного отчёта.
+
+    Raises:
+        TypeError: При неверном типе аргумента.
+        ValueError: Если передан только один DataFrame либо результат не
+            сериализуется без ``NaN``/``Infinity``.
+        FileExistsError: Если файл уже существует и ``overwrite=False``.
+        OSError: При ошибке подготовки директории или записи.
+    """
+    prepared_path = _prepare_output_path(output_path, overwrite=overwrite)
+    document = _build_html_document(
+        result,
+        reference=reference,
+        current=current,
+    )
+    _write_text_atomic(document, prepared_path)
+    return prepared_path

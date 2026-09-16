@@ -2,11 +2,47 @@
 
 from __future__ import annotations
 
+import copy
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
-from data_drift_guardian.reporting import distribution_figure
+from data_drift_guardian import analyze
+from data_drift_guardian.config import load_config
+from data_drift_guardian.contracts import AnalysisResult
+from data_drift_guardian.reporting import distribution_figure, export_html
 from plotly.graph_objects import Figure
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_CONFIG = PROJECT_ROOT / "configs" / "default.yaml"
+
+
+@pytest.fixture
+def report_payload() -> tuple[AnalysisResult, pd.DataFrame, pd.DataFrame]:
+    reference = pd.DataFrame(
+        {
+            "age": np.arange(20.0, 40.0),
+            "income": np.arange(50_000.0, 70_000.0, 1_000.0),
+            "region": pd.Series(
+                ["central", "northwest", "south", "volga"] * 5,
+                dtype="string",
+            ),
+        }
+    )
+    current = pd.DataFrame(
+        {
+            "age": np.arange(21.0, 41.0),
+            "income": np.arange(51_000.0, 71_000.0, 1_000.0),
+            "region": pd.Series(
+                ["central", "northwest", "south", "volga"] * 5,
+                dtype="string",
+            ),
+        }
+    )
+    result = analyze(reference, current, config=load_config(DEFAULT_CONFIG))
+    return result, reference, current
 
 
 def test_numeric_figure_uses_common_bins_and_normalized_fractions() -> None:
@@ -118,3 +154,147 @@ def test_non_series_input_raises_type_error(
 def test_numeric_figure_rejects_non_numeric_dtype(series: pd.Series) -> None:
     with pytest.raises(TypeError, match="числовой dtype"):
         distribution_figure(series, series, "numeric")
+
+
+def test_export_html_creates_self_contained_report_with_all_sections(
+    tmp_path: Path,
+    report_payload: tuple[AnalysisResult, pd.DataFrame, pd.DataFrame],
+) -> None:
+    result, reference, current = report_payload
+    output_path = tmp_path / "nested" / "report.html"
+
+    returned_path = export_html(
+        result,
+        output_path,
+        reference=reference,
+        current=current,
+    )
+
+    content = output_path.read_text(encoding="utf-8")
+    assert returned_path == output_path
+    assert content.startswith("<!doctype html>")
+    assert '<meta charset="utf-8">' in content
+    assert "Сводка" in content
+    assert "Schema Validation" in content
+    assert "Data Quality" in content
+    assert "Data Drift" in content
+    assert "Adversarial Validation" in content
+    assert "Фактически применённая конфигурация" in content
+    assert "Распределения" in content
+    assert content.count('id="plotly-library"') == 1
+    assert "Plotly.newPlot" in content
+    assert 'src="https://cdn.plot.ly' not in content
+    assert "contract_version" in content
+
+
+def test_export_html_without_frames_is_complete_and_explains_missing_plots(
+    tmp_path: Path,
+    report_payload: tuple[AnalysisResult, pd.DataFrame, pd.DataFrame],
+) -> None:
+    result, _, _ = report_payload
+    output_path = tmp_path / "report.html"
+
+    export_html(result, output_path)
+
+    content = output_path.read_text(encoding="utf-8")
+    assert "Reference и Current не были переданы" in content
+    assert 'id="plotly-library"' not in content
+    assert "Plotly.newPlot" not in content
+    assert "Проверка пропущена" in content
+
+
+def test_export_html_escapes_user_strings_in_text_and_plotly(
+    tmp_path: Path,
+    report_payload: tuple[AnalysisResult, pd.DataFrame, pd.DataFrame],
+) -> None:
+    result, reference, current = report_payload
+    payload = '</script><script>alert("xss")</script>'
+    result["alerts"] = [
+        {
+            "source": "drift",
+            "feature": payload,
+            "check": "unsafe-check",
+            "severity": "warning",
+            "message": payload,
+        }
+    ]
+    current.loc[0, "region"] = payload
+    output_path = tmp_path / "unsafe.html"
+
+    export_html(
+        result,
+        output_path,
+        reference=reference,
+        current=current,
+    )
+
+    content = output_path.read_text(encoding="utf-8")
+    assert payload not in content
+    assert '&lt;/script&gt;&lt;script&gt;alert(&quot;' in content
+    assert "unsafe-check" in content
+
+
+def test_export_html_requires_both_frames_or_neither(
+    tmp_path: Path,
+    report_payload: tuple[AnalysisResult, pd.DataFrame, pd.DataFrame],
+) -> None:
+    result, reference, _ = report_payload
+
+    with pytest.raises(ValueError, match="одновременно reference и current"):
+        export_html(result, tmp_path / "report.html", reference=reference)
+
+    assert not (tmp_path / "report.html").exists()
+
+
+def test_export_html_protects_existing_file_and_supports_overwrite(
+    tmp_path: Path,
+    report_payload: tuple[AnalysisResult, pd.DataFrame, pd.DataFrame],
+) -> None:
+    result, _, _ = report_payload
+    output_path = tmp_path / "report.html"
+    output_path.write_text("исходный отчёт", encoding="utf-8")
+
+    with pytest.raises(FileExistsError, match="overwrite=True"):
+        export_html(result, output_path)
+
+    assert output_path.read_text(encoding="utf-8") == "исходный отчёт"
+
+    export_html(result, output_path, overwrite=True)
+
+    assert output_path.read_text(encoding="utf-8").startswith("<!doctype html>")
+
+
+def test_export_html_serialization_error_preserves_existing_file(
+    tmp_path: Path,
+    report_payload: tuple[AnalysisResult, pd.DataFrame, pd.DataFrame],
+) -> None:
+    result, _, _ = report_payload
+    invalid_result = copy.deepcopy(result)
+    invalid_result["effective_config"]["random_seed"] = float("nan")  # type: ignore[typeddict-item]
+    output_path = tmp_path / "report.html"
+    output_path.write_text("не заменять", encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        export_html(invalid_result, output_path, overwrite=True)
+
+    assert output_path.read_text(encoding="utf-8") == "не заменять"
+    assert not list(tmp_path.glob(".report.html.*.tmp"))
+
+
+def test_export_html_preserves_input_frames(
+    tmp_path: Path,
+    report_payload: tuple[AnalysisResult, pd.DataFrame, pd.DataFrame],
+) -> None:
+    result, reference, current = report_payload
+    original_reference = reference.copy(deep=True)
+    original_current = current.copy(deep=True)
+
+    export_html(
+        result,
+        tmp_path / "report.html",
+        reference=reference,
+        current=current,
+    )
+
+    pd.testing.assert_frame_equal(reference, original_reference)
+    pd.testing.assert_frame_equal(current, original_current)
