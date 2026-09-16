@@ -29,6 +29,7 @@ from .contracts import (
     QualityResult,
     SchemaResult,
     Status,
+    ThresholdSource,
 )
 from .drift import (
     build_probabilities,
@@ -40,6 +41,7 @@ from .drift import (
 )
 from .quality import check_quality
 from .schema import validate_schema
+from .thresholds import resolve_distance_threshold
 
 _STATUS_PRIORITY: tuple[Status, ...] = (
     "error",
@@ -113,12 +115,14 @@ def _default_config(reference: pd.DataFrame) -> AnalysisConfig:
                 "psi": None,
                 "js": None,
             },
+            "feature_thresholds": {},
         },
         "adversarial": {
             "enabled": False,
             "n_splits": 3,
             "roc_auc_threshold": None,
             "exclude_columns": [],
+            "group_column": None,
         },
     }
     return validate_config(raw_config)
@@ -165,10 +169,13 @@ def _exceeds(value: float, threshold: float) -> bool:
 def _apply_distance_threshold(
     result: CheckResult,
     threshold: float | None,
+    threshold_source: ThresholdSource,
 ) -> CheckResult:
     """Применить верхний порог к успешно рассчитанной distance-метрике."""
 
     result["details"]["decision_quantity"] = "value"
+    result["details"]["resolved_threshold"] = threshold
+    result["details"]["threshold_source"] = threshold_source
     if result["status"] != "ok" or result["value"] is None:
         return result
     if threshold is None:
@@ -230,6 +237,7 @@ def _stability_results(
     reference: pd.Series,
     current: pd.Series,
     *,
+    feature_name: str,
     feature_config: FeatureConfig,
     drift_config: DriftConfig,
     methods: list[str],
@@ -240,20 +248,31 @@ def _stability_results(
     if not requested:
         return {}
 
+    def with_threshold(method: str, result: CheckResult) -> CheckResult:
+        threshold, source = resolve_distance_threshold(
+            feature_name,
+            method,  # type: ignore[arg-type]
+            drift_config,
+        )
+        return _apply_distance_threshold(result, threshold, source)
+
     if n_reference_valid == 0 or n_current_valid == 0:
         reason = (
             "Для построения распределений требуется хотя бы одно пригодное "
             "значение в каждой выборке"
         )
         return {
-            method: _check_result(
+            method: with_threshold(
                 method,
-                "skipped",
-                reason,
-                details={
-                    "n_reference_valid": n_reference_valid,
-                    "n_current_valid": n_current_valid,
-                },
+                _check_result(
+                    method,
+                    "skipped",
+                    reason,
+                    details={
+                        "n_reference_valid": n_reference_valid,
+                        "n_current_valid": n_current_valid,
+                    },
+                ),
             )
             for method in requested
         }
@@ -270,7 +289,10 @@ def _stability_results(
         reason = (
             f"Не удалось построить общее распределение: {type(exc).__name__}: {exc}"
         )
-        return {method: _check_result(method, "error", reason) for method in requested}
+        return {
+            method: with_threshold(method, _check_result(method, "error", reason))
+            for method in requested
+        }
 
     results: dict[str, CheckResult] = {}
     for method in requested:
@@ -295,8 +317,7 @@ def _stability_results(
             )
 
         result["details"]["binning"] = deepcopy(binning_details)
-        threshold = drift_config["distance_thresholds"][method]
-        results[method] = _apply_distance_threshold(result, threshold)
+        results[method] = with_threshold(method, result)
     return results
 
 
@@ -332,6 +353,7 @@ def _analyze_feature(
     reference: pd.Series,
     current: pd.Series,
     *,
+    feature_name: str,
     feature_config: FeatureConfig,
     drift_config: DriftConfig,
 ) -> FeatureResult:
@@ -346,6 +368,7 @@ def _analyze_feature(
     stability = _stability_results(
         reference,
         current,
+        feature_name=feature_name,
         feature_config=feature_config,
         drift_config=drift_config,
         methods=methods,
@@ -361,9 +384,15 @@ def _analyze_feature(
                 drift_config,
             )
         elif method == "wasserstein":
+            threshold, source = resolve_distance_threshold(
+                feature_name,
+                "wasserstein",
+                drift_config,
+            )
             checks[method] = _apply_distance_threshold(
                 wasserstein(reference, current),
-                drift_config["distance_thresholds"]["wasserstein"],
+                threshold,
+                source,
             )
         elif method in stability:
             checks[method] = stability[method]
@@ -427,6 +456,7 @@ def _drift_result(
         features[feature] = _analyze_feature(
             reference[feature],
             current[feature],
+            feature_name=feature,
             feature_config=feature_config,
             drift_config=config["drift"],
         )
@@ -462,22 +492,59 @@ def _adversarial_result(
     config: AnalysisConfig,
     schema: SchemaResult,
 ) -> AdversarialResult:
-    enabled = config["adversarial"]["enabled"]
+    adversarial_config = config["adversarial"]
+    enabled = adversarial_config["enabled"]
+    group_column = adversarial_config["group_column"]
+    split_strategy = (
+        "stratified_group_kfold"
+        if group_column is not None
+        else "stratified_kfold"
+    )
     if not enabled:
         return {
             "status": "skipped",
             "roc_auc": None,
-            "threshold": config["adversarial"]["roc_auc_threshold"],
+            "threshold": adversarial_config["roc_auc_threshold"],
             "fold_auc": [],
             "feature_importance": {},
             "importance_type": None,
+            "split_strategy": split_strategy,
+            "group_column": group_column,
+            "n_groups": None,
             "alert": None,
             "reason": "Adversarial Validation отключён в конфигурации",
         }
 
     valid_features = list(schema["valid_features"])
+    analysis_columns = list(valid_features)
+    if group_column is not None:
+        missing_in = [
+            name
+            for name, frame in (("reference", reference), ("current", current))
+            if group_column not in frame.columns
+        ]
+        if missing_in:
+            return {
+                "status": "skipped",
+                "roc_auc": None,
+                "threshold": adversarial_config["roc_auc_threshold"],
+                "fold_auc": [],
+                "feature_importance": {},
+                "importance_type": None,
+                "split_strategy": split_strategy,
+                "group_column": group_column,
+                "n_groups": None,
+                "alert": None,
+                "reason": (
+                    f"group_column {group_column!r} отсутствует в: "
+                    + ", ".join(missing_in)
+                ),
+            }
+        if group_column not in analysis_columns:
+            analysis_columns.append(group_column)
+
     settings: dict[str, Any] = {
-        **config["adversarial"],
+        **adversarial_config,
         "random_seed": config["random_seed"],
         "feature_types": {
             feature: config["schema"]["features"][feature]["kind"]
@@ -486,18 +553,21 @@ def _adversarial_result(
     }
     try:
         return adversarial_validate(
-            reference.loc[:, valid_features],
-            current.loc[:, valid_features],
+            reference.loc[:, analysis_columns],
+            current.loc[:, analysis_columns],
             settings,
         )
     except (TypeError, ValueError) as exc:
         return {
             "status": "error",
             "roc_auc": None,
-            "threshold": config["adversarial"]["roc_auc_threshold"],
+            "threshold": adversarial_config["roc_auc_threshold"],
             "fold_auc": [],
             "feature_importance": {},
             "importance_type": None,
+            "split_strategy": split_strategy,
+            "group_column": group_column,
+            "n_groups": None,
             "alert": None,
             "reason": (
                 "Не удалось подготовить Adversarial Validation: "
@@ -673,6 +743,7 @@ def analyze(
     feature_results = list(drift["features"].values())
     result: AnalysisResult = {
         "contract_version": validated_config["contract_version"],
+        "effective_config": deepcopy(validated_config),
         "metadata": {
             "reference_rows": len(reference),
             "current_rows": len(current),

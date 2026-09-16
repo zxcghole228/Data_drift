@@ -82,6 +82,21 @@ def _single_numeric_config() -> dict[str, Any]:
     }
 
 
+def _two_numeric_v02_config() -> dict[str, Any]:
+    config = _single_numeric_config()
+    config["contract_version"] = "0.2"
+    config["schema"]["features"] = {
+        "age": {"kind": "numeric", "nullable": True},
+        "income": {"kind": "numeric", "nullable": True},
+    }
+    config["drift"]["feature_thresholds"] = {
+        "age": {"wasserstein": 2.0},
+        "income": {"wasserstein": 4.0},
+    }
+    config["adversarial"]["group_column"] = None
+    return config
+
+
 def test_normal_pass_combines_real_modules_and_preserves_inputs(
     valid_config: dict[str, Any],
     healthy_frames: tuple[pd.DataFrame, pd.DataFrame],
@@ -93,7 +108,8 @@ def test_normal_pass_combines_real_modules_and_preserves_inputs(
 
     result = analyze(reference, current, valid_config)
 
-    assert result["contract_version"] == "0.1"
+    assert result["contract_version"] == "0.2"
+    assert result["effective_config"] == valid_config
     assert result["metadata"] == {
         "reference_rows": 20,
         "current_rows": 20,
@@ -205,6 +221,7 @@ def test_configured_distance_threshold_creates_explainable_drift_alert() -> None
     check = result["drift"]["features"]["value"]["checks"]["wasserstein"]
     assert check["value"] == pytest.approx(10.0)
     assert check["threshold"] == 5.0
+    assert check["details"]["threshold_source"] == "global"
     assert check["alert"] is True
     assert check["status"] == "warning"
     assert result["drift"]["features"]["value"]["alert"] is True
@@ -214,6 +231,102 @@ def test_configured_distance_threshold_creates_explainable_drift_alert() -> None
     assert result["alerts"][0]["source"] == "drift"
     assert result["alerts"][0]["feature"] == "value"
     assert result["alerts"][0]["check"] == "wasserstein"
+    assert result["effective_config"]["contract_version"] == "0.2"
+    assert result["effective_config"]["drift"]["feature_thresholds"] == {}
+
+
+def test_feature_thresholds_override_global_threshold_independently() -> None:
+    config = _two_numeric_v02_config()
+    reference = pd.DataFrame(
+        {"age": [0.0, 1.0, 2.0], "income": [100.0, 101.0, 102.0]}
+    )
+    current = pd.DataFrame(
+        {"age": [3.0, 4.0, 5.0], "income": [103.0, 104.0, 105.0]}
+    )
+
+    result = analyze(reference, current, config)
+
+    age = result["drift"]["features"]["age"]["checks"]["wasserstein"]
+    income = result["drift"]["features"]["income"]["checks"]["wasserstein"]
+    assert age["value"] == pytest.approx(3.0)
+    assert age["threshold"] == 2.0
+    assert age["details"]["threshold_source"] == "feature"
+    assert age["alert"] is True
+    assert income["value"] == pytest.approx(3.0)
+    assert income["threshold"] == 4.0
+    assert income["details"]["threshold_source"] == "feature"
+    assert income["alert"] is False
+
+
+def test_distance_threshold_uses_strict_upper_boundary() -> None:
+    config = _two_numeric_v02_config()
+    config["drift"]["feature_thresholds"]["age"]["wasserstein"] = 3.0
+    reference = pd.DataFrame(
+        {"age": [0.0, 1.0, 2.0], "income": [100.0, 101.0, 102.0]}
+    )
+    current = pd.DataFrame(
+        {"age": [3.0, 4.0, 5.0], "income": [100.0, 101.0, 102.0]}
+    )
+
+    check = analyze(reference, current, config)["drift"]["features"]["age"][
+        "checks"
+    ]["wasserstein"]
+
+    assert check["value"] == pytest.approx(3.0)
+    assert check["threshold"] == 3.0
+    assert check["alert"] is False
+
+
+def test_missing_and_explicit_null_thresholds_do_not_make_a_decision() -> None:
+    config = _two_numeric_v02_config()
+    config["drift"]["distance_thresholds"]["wasserstein"] = 1.0
+    config["drift"]["feature_thresholds"] = {
+        "age": {"wasserstein": None},
+    }
+    reference = pd.DataFrame(
+        {"age": [0.0, 1.0, 2.0], "income": [0.0, 1.0, 2.0]}
+    )
+    current = pd.DataFrame(
+        {"age": [10.0, 11.0, 12.0], "income": [10.0, 11.0, 12.0]}
+    )
+
+    result = analyze(reference, current, config)
+    age = result["drift"]["features"]["age"]["checks"]["wasserstein"]
+    income = result["drift"]["features"]["income"]["checks"]["wasserstein"]
+
+    assert age["threshold"] is None
+    assert age["alert"] is None
+    assert age["details"]["threshold_source"] == "feature"
+    assert income["threshold"] == 1.0
+    assert income["details"]["threshold_source"] == "global"
+
+    config["drift"]["distance_thresholds"]["wasserstein"] = None
+    config["drift"]["feature_thresholds"] = {}
+    no_threshold = analyze(reference, current, config)["drift"]["features"]["age"][
+        "checks"
+    ]["wasserstein"]
+    assert no_threshold["alert"] is None
+    assert no_threshold["details"]["threshold_source"] == "not_configured"
+
+
+def test_feature_threshold_resolver_is_used_by_psi_and_js() -> None:
+    config = _single_numeric_config()
+    config["contract_version"] = "0.2"
+    config["drift"]["numeric_methods"] = ["psi", "js"]
+    config["drift"]["distance_thresholds"].update({"psi": 0.2, "js": 0.01})
+    config["drift"]["feature_thresholds"] = {"value": {"psi": 1.0}}
+    config["adversarial"]["group_column"] = None
+    reference = pd.DataFrame({"value": np.arange(100.0)})
+    current = pd.DataFrame({"value": np.arange(100.0) + 20.0})
+
+    checks = analyze(reference, current, config)["drift"]["features"]["value"][
+        "checks"
+    ]
+
+    assert checks["psi"]["threshold"] == 1.0
+    assert checks["psi"]["details"]["threshold_source"] == "feature"
+    assert checks["js"]["threshold"] == 0.01
+    assert checks["js"]["details"]["threshold_source"] == "global"
 
 
 def test_raw_p_value_rule_is_used_only_when_multiple_testing_is_none() -> None:
@@ -325,6 +438,49 @@ def test_enabled_adversarial_module_returns_real_oof_result(
     assert result["adversarial"]["threshold"] is None
     assert result["adversarial"]["alert"] is None
     json.dumps(result, allow_nan=False)
+
+
+def test_pipeline_passes_group_column_without_using_it_as_a_feature(
+    valid_config: dict[str, Any],
+    healthy_frames: tuple[pd.DataFrame, pd.DataFrame],
+) -> None:
+    reference, current = healthy_frames
+    entity_ids = [f"entity-{index}" for index in range(len(reference))]
+    reference["entity_id"] = entity_ids
+    current["entity_id"] = entity_ids
+    valid_config["schema"]["features"]["entity_id"] = {
+        "kind": "categorical",
+        "nullable": False,
+    }
+    valid_config["adversarial"].update(
+        {"enabled": True, "group_column": "entity_id"}
+    )
+
+    result = analyze(reference, current, valid_config)
+
+    adversarial = result["adversarial"]
+    assert adversarial["status"] == "ok"
+    assert adversarial["split_strategy"] == "stratified_group_kfold"
+    assert adversarial["group_column"] == "entity_id"
+    assert adversarial["n_groups"] == len(entity_ids)
+    assert "entity_id" not in adversarial["feature_importance"]
+    assert result["effective_config"]["adversarial"]["group_column"] == "entity_id"
+
+
+def test_pipeline_skips_missing_group_column_with_reason(
+    valid_config: dict[str, Any],
+    healthy_frames: tuple[pd.DataFrame, pd.DataFrame],
+) -> None:
+    reference, current = healthy_frames
+    valid_config["adversarial"].update(
+        {"enabled": True, "group_column": "entity_id"}
+    )
+
+    result = analyze(reference, current, valid_config)
+
+    assert result["adversarial"]["status"] == "skipped"
+    assert result["adversarial"]["split_strategy"] == "stratified_group_kfold"
+    assert "отсутствует" in str(result["adversarial"]["reason"])
 
 
 def test_adversarial_threshold_creates_global_alert(

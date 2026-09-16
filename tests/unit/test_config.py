@@ -62,11 +62,78 @@ def test_validate_config_returns_independent_json_safe_copy(
 
     result = validate_config(valid_config)
 
-    assert result == original
+    assert result["contract_version"] == "0.2"
+    assert result["drift"]["feature_thresholds"] == {}
+    assert result["adversarial"]["group_column"] is None
     assert result is not valid_config
     result["schema"]["features"]["age"]["min"] = 21
     assert valid_config == original
     json.dumps(result, allow_nan=False)
+
+
+def test_current_contract_accepts_feature_thresholds_and_group_column(
+    valid_config: dict[str, Any],
+) -> None:
+    valid_config["contract_version"] = "0.2"
+    valid_config["drift"]["feature_thresholds"] = {
+        "age": {"wasserstein": 2.5, "psi": None},
+        "region": {"js": 0.1},
+    }
+    valid_config["adversarial"]["group_column"] = "entity_id"
+
+    result = validate_config(valid_config)
+
+    assert result["drift"]["feature_thresholds"] == {
+        "age": {"wasserstein": 2.5, "psi": None},
+        "region": {"js": 0.1},
+    }
+    assert result["adversarial"]["group_column"] == "entity_id"
+
+
+def test_current_contract_requires_new_sections(
+    valid_config: dict[str, Any],
+) -> None:
+    valid_config["contract_version"] = "0.2"
+
+    with pytest.raises(ValueError, match="feature_thresholds"):
+        validate_config(valid_config)
+
+    valid_config["drift"]["feature_thresholds"] = {}
+    with pytest.raises(ValueError, match="group_column"):
+        validate_config(valid_config)
+
+
+@pytest.mark.parametrize(
+    ("feature_thresholds", "message"),
+    [
+        ({"unknown": {"psi": 0.1}}, "неизвестный признак"),
+        ({"region": {"wasserstein": 1.0}}, "неизвестные ключи"),
+        ({"age": {"unknown": 1.0}}, "неизвестные ключи"),
+        ({"age": {"wasserstein": -1.0}}, "не должен быть отрицательным"),
+        ({"age": {"wasserstein": float("inf")}}, "конечным числом"),
+        ({"age": {"wasserstein": True}}, "конечным числом"),
+    ],
+)
+def test_invalid_feature_thresholds_are_rejected(
+    valid_config: dict[str, Any],
+    feature_thresholds: dict[str, dict[str, object]],
+    message: str,
+) -> None:
+    valid_config["contract_version"] = "0.2"
+    valid_config["drift"]["feature_thresholds"] = feature_thresholds
+    valid_config["adversarial"]["group_column"] = None
+
+    with pytest.raises(ValueError, match=message):
+        validate_config(valid_config)
+
+
+def test_invalid_group_column_is_rejected(valid_config: dict[str, Any]) -> None:
+    valid_config["contract_version"] = "0.2"
+    valid_config["drift"]["feature_thresholds"] = {}
+    valid_config["adversarial"]["group_column"] = ""
+
+    with pytest.raises(ValueError, match="group_column"):
+        validate_config(valid_config)
 
 
 def test_load_config_reads_yaml_from_path(

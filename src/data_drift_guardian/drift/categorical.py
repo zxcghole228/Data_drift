@@ -158,6 +158,19 @@ def _pool_counts(
     return result
 
 
+def _cramers_v(statistic: float, observed: np.ndarray) -> float | None:
+    """Вернуть стандартный Cramér's V или ``None`` для вырожденной таблицы."""
+
+    total = int(observed.sum())
+    minimum_dimension = min(observed.shape[0] - 1, observed.shape[1] - 1)
+    if total <= 0 or minimum_dimension <= 0:
+        return None
+    value = float(np.sqrt(statistic / (total * minimum_dimension)))
+    if not np.isfinite(value):
+        return None
+    return min(1.0, max(0.0, value))
+
+
 def chi_square(
     reference: pd.Series,
     current: pd.Series,
@@ -211,6 +224,14 @@ def chi_square(
         )
 
     categories = _ordered_union(reference, current)
+    reference_categories = set(reference_counts)
+    current_categories = set(current_counts)
+    new_categories = [
+        category for category in categories if category not in reference_categories
+    ]
+    disappeared_categories = [
+        category for category in categories if category not in current_categories
+    ]
     combined_counts = reference_counts + current_counts
     rare_categories = {
         category
@@ -231,9 +252,28 @@ def chi_square(
         ],
         dtype=np.int64,
     )
+    pooled_reference_count = sum(
+        reference_counts[category] for category in rare_categories
+    )
+    pooled_current_count = sum(
+        current_counts[category] for category in rare_categories
+    )
+    pooled_total = pooled_reference_count + pooled_current_count
+    valid_total = n_reference_valid + n_current_valid
     details = {
         **base_details,
         "categories": labels,
+        "original_category_count": len(categories),
+        "effective_category_count": len(effective_categories),
+        "reference_category_count": len(reference_categories),
+        "current_category_count": len(current_categories),
+        "new_category_count": len(new_categories),
+        "new_categories": [_category_label(category) for category in new_categories],
+        "disappeared_category_count": len(disappeared_categories),
+        "disappeared_categories": [
+            _category_label(category) for category in disappeared_categories
+        ],
+        "pooled_category_count": len(rare_categories),
         "pooled_categories": [
             _category_label(category)
             for category in categories
@@ -243,6 +283,17 @@ def chi_square(
             "reference": observed[0].tolist(),
             "current": observed[1].tolist(),
         },
+        "pooled_observation_count": {
+            "reference": int(pooled_reference_count),
+            "current": int(pooled_current_count),
+            "combined": int(pooled_total),
+        },
+        "pooled_observation_fraction": {
+            "reference": float(pooled_reference_count / n_reference_valid),
+            "current": float(pooled_current_count / n_current_valid),
+            "combined": float(pooled_total / valid_total),
+        },
+        "cramers_v": None,
     }
 
     if observed.shape[1] < 2:
@@ -292,6 +343,15 @@ def chi_square(
             "SciPy вернул нечисловой или бесконечный результат chi2",
             details=details,
         )
+    cramers_v = _cramers_v(statistic, observed)
+    if cramers_v is None:
+        return _result(
+            "skipped",
+            "Невозможно вычислить Cramér's V для вырожденной таблицы частот",
+            details=details,
+        )
+    details["cramers_v"] = cramers_v
+    details["cramers_v_decision"] = "diagnostic_only_no_threshold"
     return _result(
         "ok",
         None,

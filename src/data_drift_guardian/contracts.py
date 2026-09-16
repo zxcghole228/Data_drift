@@ -1,4 +1,4 @@
-"""Стартовый контракт 0.1. Ответственные: Михаил и Павел.
+"""Контракт результата 0.2. Ответственные: Михаил и Павел.
 
 TypedDict описывает словарь, но сам по себе не выполняет runtime-валидацию.
 Семантика полей и статусов: docs/contracts.md.
@@ -12,6 +12,9 @@ Status = Literal["ok", "warning", "critical", "skipped", "error"]
 FeatureType = Literal["numeric", "categorical"]
 AlertSource = Literal["schema", "quality", "drift", "adversarial"]
 MultipleTestingMethod = Literal["none", "bh"]
+DistanceMethod = Literal["wasserstein", "psi", "js"]
+ThresholdSource = Literal["feature", "global", "not_configured"]
+SplitStrategy = Literal["stratified_kfold", "stratified_group_kfold"]
 
 
 class FeatureConfig(TypedDict):
@@ -44,6 +47,14 @@ class DistanceThresholds(TypedDict):
     js: float | None
 
 
+class FeatureDistanceThresholds(TypedDict, total=False):
+    """Частичные переопределения distance-порогов одного признака."""
+
+    wasserstein: float | None
+    psi: float | None
+    js: float | None
+
+
 class DriftConfig(TypedDict):
     numeric_methods: list[Literal["ks", "wasserstein", "psi", "js"]]
     categorical_methods: list[Literal["chi2", "psi", "js"]]
@@ -53,6 +64,7 @@ class DriftConfig(TypedDict):
     psi_smoothing: float
     js_base: float
     distance_thresholds: DistanceThresholds
+    feature_thresholds: dict[str, FeatureDistanceThresholds]
 
 
 class AdversarialConfig(TypedDict):
@@ -60,6 +72,7 @@ class AdversarialConfig(TypedDict):
     n_splits: int
     roc_auc_threshold: float | None
     exclude_columns: list[str]
+    group_column: str | None
 
 
 class AnalysisConfig(TypedDict):
@@ -130,6 +143,9 @@ class AdversarialResult(TypedDict):
     fold_auc: list[float]
     feature_importance: dict[str, float]
     importance_type: str | None
+    split_strategy: SplitStrategy
+    group_column: str | None
+    n_groups: int | None
     alert: bool | None
     reason: str | None
 
@@ -158,6 +174,7 @@ class Summary(TypedDict):
 
 class AnalysisResult(TypedDict):
     contract_version: str
+    effective_config: AnalysisConfig
     metadata: Metadata
     schema: SchemaResult
     quality: QualityResult

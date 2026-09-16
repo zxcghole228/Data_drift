@@ -6,9 +6,11 @@
 
 Реализованы воспроизводимый генератор независимых Reference/Current-выборок,
 загрузка CSV/Parquet, валидация конфигурации и схемы, Data Quality, KS,
-Wasserstein, χ², PSI, Jensen–Shannon divergence, Benjamini–Hochberg и общий
-`analyze()` pipeline. Adversarial Validation возвращает OOF ROC-AUC по
-LightGBM, значения фолдов и агрегированные важности. Streamlit-интерфейс
+Wasserstein, χ², Cramér's V, PSI, Jensen–Shannon divergence,
+Benjamini–Hochberg и общий `analyze()` pipeline. Контракт 0.2 поддерживает
+персональные distance-пороги признаков и возвращает `effective_config`.
+Adversarial Validation возвращает OOF ROC-AUC по LightGBM, значения фолдов,
+агрегированные важности и опциональный групповой split. Streamlit-интерфейс
 загружает две таблицы и YAML-конфигурацию, показывает статусы, проверки,
 алерты, ML-результат и сопоставимые распределения. Экспорт итогового отчёта
 пока остаётся незавершённым требованием к 27.09.
@@ -117,6 +119,21 @@ result = analyze(reference, current, config=config)
 
 Pipeline проверяет схему и качество данных, рассчитывает настроенные drift-метрики и возвращает единый JSON-безопасный словарь. Неприменимые к конкретным данным проверки получают `skipped` с причиной. При `config=None` семантические типы признаков выводятся только из Reference.
 
+YAML 0.1 по-прежнему принимается и нормализуется до контракта 0.2. Фактически
+использованная конфигурация доступна в `result["effective_config"]`. Пример
+разных Wasserstein-порогов в единицах каждого признака:
+
+```yaml
+drift:
+  distance_thresholds:
+    wasserstein: null
+    psi: null
+    js: null
+  feature_thresholds:
+    age: {wasserstein: 3.0}
+    income: {wasserstein: 10000.0}
+```
+
 Adversarial Validation по умолчанию отключён, чтобы тяжёлый ML-блок не
 запускался неожиданно. Для запуска укажите в YAML:
 
@@ -126,8 +143,11 @@ adversarial:
   n_splits: 3
   roc_auc_threshold: 0.70  # исследовательский пример, не универсальная граница
   exclude_columns: []     # сюда добавить ID и target при их наличии
+  group_column: null      # либо имя entity ID для StratifiedGroupKFold
 ```
 
+При заданном `group_column` колонка автоматически исключается из model
+features; пропущенные ID и недостаток групп дают объяснимый `skipped`.
 Описание результата: [docs/contracts.md](docs/contracts.md).
 
 Запуск тестов:

@@ -16,6 +16,7 @@ from .contracts import (
     DistanceThresholds,
     DriftConfig,
     FeatureConfig,
+    FeatureDistanceThresholds,
     FeatureType,
     MultipleTestingMethod,
     QualityConfig,
@@ -24,7 +25,9 @@ from .contracts import (
 
 
 SUPPORTED_CONFIG_EXTENSIONS = frozenset({".yaml", ".yml"})
-CONTRACT_VERSION = "0.1"
+CONTRACT_VERSION = "0.2"
+LEGACY_CONTRACT_VERSION = "0.1"
+SUPPORTED_CONTRACT_VERSIONS = frozenset({LEGACY_CONTRACT_VERSION, CONTRACT_VERSION})
 
 _ROOT_KEYS = frozenset(
     {"contract_version", "random_seed", "schema", "quality", "drift", "adversarial"}
@@ -35,7 +38,7 @@ _FEATURE_OPTIONAL_KEYS = frozenset({"min", "max"})
 _QUALITY_KEYS = frozenset(
     {"max_missing_fraction", "max_missing_increase_pp", "max_duplicate_fraction"}
 )
-_DRIFT_KEYS = frozenset(
+_DRIFT_KEYS_V01 = frozenset(
     {
         "numeric_methods",
         "categorical_methods",
@@ -47,10 +50,12 @@ _DRIFT_KEYS = frozenset(
         "distance_thresholds",
     }
 )
+_DRIFT_KEYS_V02 = _DRIFT_KEYS_V01 | {"feature_thresholds"}
 _DISTANCE_THRESHOLD_KEYS = frozenset({"wasserstein", "psi", "js"})
-_ADVERSARIAL_KEYS = frozenset(
+_ADVERSARIAL_KEYS_V01 = frozenset(
     {"enabled", "n_splits", "roc_auc_threshold", "exclude_columns"}
 )
+_ADVERSARIAL_KEYS_V02 = _ADVERSARIAL_KEYS_V01 | {"group_column"}
 
 _FEATURE_TYPES = frozenset({"numeric", "categorical"})
 _NUMERIC_METHODS = frozenset({"ks", "wasserstein", "psi", "js"})
@@ -247,9 +252,59 @@ def _validate_distance_thresholds(config: object) -> DistanceThresholds:
     return result
 
 
-def _validate_drift_config(config: object) -> DriftConfig:
+def _validate_feature_thresholds(
+    config: object,
+    features: Mapping[str, FeatureConfig],
+) -> dict[str, FeatureDistanceThresholds]:
+    section = _as_mapping(config, "drift.feature_thresholds")
+    result: dict[str, FeatureDistanceThresholds] = {}
+    for feature_name, raw_thresholds in section.items():
+        if feature_name not in features:
+            raise ValueError(
+                "drift.feature_thresholds содержит неизвестный признак: "
+                f"{feature_name}"
+            )
+
+        context = f"drift.feature_thresholds.{feature_name}"
+        thresholds = _as_mapping(raw_thresholds, context)
+        allowed = (
+            _DISTANCE_THRESHOLD_KEYS
+            if features[feature_name]["kind"] == "numeric"
+            else frozenset({"psi", "js"})
+        )
+        _check_keys(
+            thresholds,
+            required=frozenset(),
+            optional=allowed,
+            context=context,
+        )
+
+        normalized: FeatureDistanceThresholds = {}
+        for method, value in thresholds.items():
+            if value is None:
+                normalized[method] = None  # type: ignore[literal-required]
+                continue
+            number = float(_as_number(value, f"{context}.{method}"))
+            if number < 0.0:
+                raise ValueError(f"{context}.{method} не должен быть отрицательным")
+            normalized[method] = number  # type: ignore[literal-required]
+        result[feature_name] = normalized
+    return result
+
+
+def _validate_drift_config(
+    config: object,
+    *,
+    input_version: str,
+    features: Mapping[str, FeatureConfig],
+) -> DriftConfig:
     section = _as_mapping(config, "drift")
-    _check_keys(section, required=_DRIFT_KEYS, context="drift")
+    required_keys = (
+        _DRIFT_KEYS_V01
+        if input_version == LEGACY_CONTRACT_VERSION
+        else _DRIFT_KEYS_V02
+    )
+    _check_keys(section, required=required_keys, context="drift")
 
     alpha = float(_as_number(section["alpha"], "drift.alpha"))
     if not 0.0 < alpha < 1.0:
@@ -300,12 +355,25 @@ def _validate_drift_config(config: object) -> DriftConfig:
         "distance_thresholds": _validate_distance_thresholds(
             section["distance_thresholds"]
         ),
+        "feature_thresholds": _validate_feature_thresholds(
+            section.get("feature_thresholds", {}),
+            features,
+        ),
     }
 
 
-def _validate_adversarial_config(config: object) -> AdversarialConfig:
+def _validate_adversarial_config(
+    config: object,
+    *,
+    input_version: str,
+) -> AdversarialConfig:
     section = _as_mapping(config, "adversarial")
-    _check_keys(section, required=_ADVERSARIAL_KEYS, context="adversarial")
+    required_keys = (
+        _ADVERSARIAL_KEYS_V01
+        if input_version == LEGACY_CONTRACT_VERSION
+        else _ADVERSARIAL_KEYS_V02
+    )
+    _check_keys(section, required=required_keys, context="adversarial")
 
     raw_threshold = section["roc_auc_threshold"]
     threshold: float | None
@@ -332,6 +400,12 @@ def _validate_adversarial_config(config: object) -> AdversarialConfig:
             "adversarial.exclude_columns не должен содержать повторяющиеся имена"
         )
 
+    raw_group_column = section.get("group_column")
+    if raw_group_column is not None and (
+        not isinstance(raw_group_column, str) or not raw_group_column.strip()
+    ):
+        raise ValueError("adversarial.group_column должен быть непустой строкой или null")
+
     return {
         "enabled": _as_bool(section["enabled"], "adversarial.enabled"),
         "n_splits": _as_int(
@@ -339,6 +413,7 @@ def _validate_adversarial_config(config: object) -> AdversarialConfig:
         ),
         "roc_auc_threshold": threshold,
         "exclude_columns": list(raw_excluded),
+        "group_column": raw_group_column,
     }
 
 
@@ -348,21 +423,30 @@ def validate_config(config: Mapping[str, Any]) -> AnalysisConfig:
     root = _as_mapping(config, "корневой конфигурации")
     _check_keys(root, required=_ROOT_KEYS, context="корневая конфигурация")
 
-    if root["contract_version"] != CONTRACT_VERSION:
+    input_version = root["contract_version"]
+    if not isinstance(input_version, str) or input_version not in SUPPORTED_CONTRACT_VERSIONS:
         raise ValueError(
-            f"contract_version должен быть равен {CONTRACT_VERSION!r}; "
-            f"получено {root['contract_version']!r}"
+            "contract_version должен быть одним из: "
+            f"{', '.join(sorted(SUPPORTED_CONTRACT_VERSIONS))}; "
+            f"получено {input_version!r}"
         )
+
+    schema = validate_schema_config(_as_mapping(root["schema"], "schema"))
 
     return {
         "contract_version": CONTRACT_VERSION,
         "random_seed": _as_int(root["random_seed"], "random_seed", minimum=0),
-        "schema": validate_schema_config(
-            _as_mapping(root["schema"], "schema")
-        ),
+        "schema": schema,
         "quality": _validate_quality_config(root["quality"]),
-        "drift": _validate_drift_config(root["drift"]),
-        "adversarial": _validate_adversarial_config(root["adversarial"]),
+        "drift": _validate_drift_config(
+            root["drift"],
+            input_version=input_version,
+            features=schema["features"],
+        ),
+        "adversarial": _validate_adversarial_config(
+            root["adversarial"],
+            input_version=input_version,
+        ),
     }
 
 
