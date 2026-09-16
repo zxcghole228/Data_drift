@@ -15,6 +15,7 @@ from .config import load_config
 from .contracts import AnalysisResult
 from .ingestion import load_table
 from .pipeline import analyze
+from .reporting import export_html
 
 
 EXIT_SUCCESS = 0
@@ -41,7 +42,8 @@ def build_parser() -> argparse.ArgumentParser:
         prog="python -m data_drift_guardian",
         description=(
             "Сравнить Reference и Current, выполнить проверки качества и "
-            "дрейфа и сохранить полный AnalysisResult в JSON."
+            "дрейфа, сохранить полный AnalysisResult в JSON и при необходимости "
+            "создать автономный HTML-отчёт."
         ),
     )
     parser.add_argument(
@@ -73,9 +75,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Путь для полного JSON-результата.",
     )
     parser.add_argument(
+        "--html-output",
+        type=Path,
+        metavar="PATH",
+        help="Необязательный путь для автономного HTML-отчёта.",
+    )
+    parser.add_argument(
         "--overwrite",
         action="store_true",
-        help="Разрешить замену существующего JSON-файла.",
+        help="Разрешить замену существующих JSON- и HTML-файлов.",
     )
     parser.add_argument(
         "--fail-on-alert",
@@ -90,18 +98,23 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _prepare_output_path(path: Path, *, overwrite: bool) -> Path:
+def _prepare_output_path(
+    path: Path,
+    *,
+    overwrite: bool,
+    output_name: str,
+) -> Path:
     """Проверить output до анализа и подготовить родительскую директорию."""
 
     output_path = path.expanduser()
     if output_path.exists():
         if output_path.is_dir():
             raise IsADirectoryError(
-                f"Путь JSON-результата указывает на директорию: {output_path}"
+                f"Путь {output_name} указывает на директорию: {output_path}"
             )
         if not output_path.is_file():
             raise ValueError(
-                f"Путь JSON-результата не является обычным файлом: {output_path}"
+                f"Путь {output_name} не является обычным файлом: {output_path}"
             )
         if not overwrite:
             raise FileExistsError(
@@ -114,13 +127,21 @@ def _prepare_output_path(path: Path, *, overwrite: bool) -> Path:
         parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         raise OSError(
-            f"Не удалось подготовить директорию результата {parent}: {exc}"
+            f"Не удалось подготовить директорию {output_name} {parent}: {exc}"
         ) from exc
     if not parent.is_dir():
         raise NotADirectoryError(
-            f"Родительский путь результата не является директорией: {parent}"
+            f"Родительский путь {output_name} не является директорией: {parent}"
         )
     return output_path
+
+
+def _same_path(first: Path, second: Path) -> bool:
+    """Сравнить пути после раскрытия ``~`` и нормализации без требования файла."""
+
+    return first.expanduser().resolve(strict=False) == second.expanduser().resolve(
+        strict=False
+    )
 
 
 def _serialize_result(result: AnalysisResult) -> str:
@@ -168,28 +189,53 @@ def write_json_atomic(result: AnalysisResult, output_path: Path) -> None:
     _write_text_atomic(serialized, output_path)
 
 
-def _print_summary(result: AnalysisResult, output_path: Path) -> None:
+def _print_summary(
+    result: AnalysisResult,
+    json_output_path: Path,
+    html_output_path: Path | None,
+) -> None:
     summary = result["summary"]
     print("Анализ завершён")
     print(f"Статус: {summary['status']}")
     print(f"Проанализировано признаков: {summary['analyzed_features']}")
     print(f"Пропущено признаков: {summary['skipped_features']}")
     print(f"Алертов: {summary['n_alerts']}")
-    print(f"JSON: {output_path}")
+    print(f"JSON: {json_output_path}")
+    if html_output_path is not None:
+        print(f"HTML: {html_output_path}")
 
 
 def _run(args: argparse.Namespace) -> int:
-    output_path = _prepare_output_path(
+    json_output_path = _prepare_output_path(
         args.json_output,
         overwrite=args.overwrite,
+        output_name="JSON-результата",
     )
+    html_output_path: Path | None = None
+    if args.html_output is not None:
+        if _same_path(args.json_output, args.html_output):
+            raise ValueError("Пути JSON-результата и HTML-отчёта должны различаться")
+        html_output_path = _prepare_output_path(
+            args.html_output,
+            overwrite=args.overwrite,
+            output_name="HTML-отчёта",
+        )
+
     reference = load_table(args.reference)
     current = load_table(args.current)
     config = load_config(args.config)
 
     result = analyze(reference, current, config=config)
-    write_json_atomic(result, output_path)
-    _print_summary(result, output_path)
+    write_json_atomic(result, json_output_path)
+    if html_output_path is not None:
+        export_html(
+            result,
+            html_output_path,
+            reference=reference,
+            current=current,
+            overwrite=args.overwrite,
+        )
+    _print_summary(result, json_output_path, html_output_path)
 
     if args.fail_on_alert and result["summary"]["has_alerts"]:
         return EXIT_ALERT
