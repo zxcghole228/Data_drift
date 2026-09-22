@@ -90,10 +90,10 @@ source .venv/Scripts/activate
 python -m pip install -r requirements.txt
 ```
 
-В `pyproject.toml` заданы допустимые диапазоны, а в `requirements.txt` — точные
-проверенные версии прямых зависимостей. Проверка импортов выполнена на macOS,
-Windows и в чистом Linux-окружении с Python 3.13. Docker-сборка пока не
-проверялась из-за отсутствия Docker в среде контрольного прогона.
+В `pyproject.toml` заданы допустимые диапазоны, в
+`requirements-runtime.txt` — точные прямые runtime-зависимости, а
+`requirements.txt` добавляет инструменты разработки. Проверка импортов
+выполнена на macOS, Windows и в чистом Linux-окружении с Python 3.13.
 
 ## Запуск
 
@@ -238,16 +238,20 @@ python -m jupyter notebook notebooks/demo.ipynb
 контроль на пяти seed и показывает те же результаты, которые читает дашборд.
 Фактические наблюдения записаны в [docs/experiments.md](docs/experiments.md).
 
-Стартовый Docker-рецепт запускается командами:
+Docker-образ со Streamlit собирается и запускается командами:
 
 ```bash
-docker build -t data-drift-guardian .
-docker run --rm -p 8501:8501 data-drift-guardian
+docker build --tag data-drift-guardian:local .
+docker run --detach --name data-drift-guardian \
+  --publish 8501:8501 data-drift-guardian:local
+docker inspect --format '{{.State.Health.Status}}' data-drift-guardian
 ```
 
-После запуска интерфейс должен быть доступен на `http://localhost:8501`.
-Рецепт включён в репозиторий, но его фактическая проверка ещё должна быть
-выполнена на машине с Docker перед финальной сдачей.
+После статуса `healthy` интерфейс доступен на `http://localhost:8501`.
+Приложение работает от непривилегированного пользователя. Полная инструкция,
+диагностика и состав автоматических проверок:
+[docs/deployment.md](docs/deployment.md). Pull request в `main` также запускает
+полные тесты Python 3.13 и Docker build/healthcheck через GitHub Actions.
 
 ## Данные, результаты и публикация
 
