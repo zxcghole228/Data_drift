@@ -21,6 +21,8 @@ data/generated/
 data/raw/
 outputs/
 *.csv
+!report/experiments/
+!report/experiments/*.csv
 *.parquet
 *.pkl
 *.joblib
