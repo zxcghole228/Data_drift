@@ -16,4 +16,6 @@
 Материалы первой недели собираются в `docs/experiments.md` и
 `notebooks/demo.ipynb`. Воспроизводимая demo-калибровка второй недели описана в
 `docs/calibration.md`; машинно-читаемые результаты создаются в
-`report/experiments/` командой `python scripts/run_calibration.py`.
+`report/experiments/` командой `python scripts/run_calibration.py`. Инженерная
+и статистическая приёмка release candidate `c33d95b` зафиксирована в
+`docs/week2_19_20_handoff.md`.
