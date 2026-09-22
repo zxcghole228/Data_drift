@@ -40,4 +40,11 @@ def test_demo_notebook_code_cells_execute_in_order(
         "combined",
     }
     assert namespace["combined_result"]["adversarial"]["roc_auc"] is not None
+    assert (
+        namespace["combined_result"]["adversarial"]["split_strategy"]
+        == "stratified_kfold"
+    )
     assert namespace["combined_result"]["summary"]["has_alerts"] is True
+    assert "threshold_source" in namespace["drift_rows"][0]
+    assert "cramers_v" in namespace["drift_rows"][0]
+    assert "calibration_summary" in namespace

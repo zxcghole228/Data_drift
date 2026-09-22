@@ -2,23 +2,38 @@
 
 from __future__ import annotations
 
+import json
+from copy import deepcopy
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Protocol
+from time import perf_counter
+from typing import Any, Protocol, cast
 
 import pandas as pd
 import streamlit as st
 
 from data_drift_guardian import analyze
-from data_drift_guardian.config import load_config
+from data_drift_guardian.config import load_config, validate_config
 from data_drift_guardian.contracts import AnalysisConfig, AnalysisResult, Status
 from data_drift_guardian.ingestion import load_table
-from data_drift_guardian.reporting import distribution_figure
+from data_drift_guardian.reporting import distribution_figure, export_html
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "configs" / "default.yaml"
 ANALYSIS_STATE_KEY = "analysis_payload"
 FEATURE_WIDGET_KEY = "distribution_feature"
+STATUS_FILTER_KEY = "result_status_filter"
+FEATURE_FILTER_KEY = "result_feature_filter"
+ADVERSARIAL_OVERRIDE_KEY = "override_adversarial"
+ADVERSARIAL_ENABLED_KEY = "adversarial_enabled"
+USE_AUC_THRESHOLD_KEY = "use_auc_threshold"
+AUC_THRESHOLD_KEY = "auc_threshold"
+
+RESULT_WIDGET_KEYS = (
+    FEATURE_WIDGET_KEY,
+    STATUS_FILTER_KEY,
+    FEATURE_FILTER_KEY,
+)
 
 STATUS_VIEW: dict[Status, tuple[str, str]] = {
     "ok": ("✅", "Успешно"),
@@ -56,10 +71,24 @@ def load_uploaded_config(uploaded_file: UploadedFileLike) -> AnalysisConfig:
         return load_config(temporary_path)
 
 
+def _clear_result_widgets() -> None:
+    for key in RESULT_WIDGET_KEYS:
+        st.session_state.pop(key, None)
+
+
 def clear_analysis() -> None:
-    """Удалить устаревший результат после изменения входных файлов."""
+    """Удалить сохранённый результат перед явным повторным анализом."""
     st.session_state.pop(ANALYSIS_STATE_KEY, None)
-    st.session_state.pop(FEATURE_WIDGET_KEY, None)
+    _clear_result_widgets()
+
+
+def mark_analysis_stale() -> None:
+    """Пометить результат неактуальным после изменения входов или настроек."""
+    payload = st.session_state.get(ANALYSIS_STATE_KEY)
+    if isinstance(payload, dict):
+        payload["stale"] = True
+        st.session_state[ANALYSIS_STATE_KEY] = payload
+    _clear_result_widgets()
 
 
 def _status_text(status: Status) -> str:
@@ -89,14 +118,30 @@ def _format_value(value: object) -> str:
     return str(value)
 
 
+def _category_diagnostics(details: dict[str, Any]) -> str:
+    keys = (
+        "new_category_count",
+        "disappeared_category_count",
+        "pooled_category_count",
+    )
+    if not any(key in details for key in keys):
+        return "—"
+    return " / ".join(_format_value(details.get(key)) for key in keys)
+
+
 def _check_row(
     *,
     source: str,
     feature: str | None,
     check: dict[str, Any],
-) -> dict[str, str]:
-    status = check["status"]
+) -> dict[str, object]:
+    status = cast(Status, check["status"])
+    details = check.get("details")
+    if not isinstance(details, dict):
+        details = {}
     return {
+        "_status": status,
+        "_feature": feature,
         "Источник": source,
         "Признак": feature or "—",
         "Проверка": str(check["name"]),
@@ -107,10 +152,14 @@ def _check_row(
         "Скорр. p-value": _format_value(check["adjusted_p_value"]),
         "Алерт": _format_value(check["alert"]),
         "Причина": str(check["reason"] or "—"),
+        "Источник порога": str(details.get("threshold_source", "—")),
+        "Cramér's V": _format_value(details.get("cramers_v")),
+        "Категории: новые / исчезнувшие / pooled": _category_diagnostics(details),
+        "Доля pooled": _format_value(details.get("pooled_observation_fraction")),
     }
 
 
-def _quality_rows(result: AnalysisResult) -> list[dict[str, str]]:
+def _quality_rows(result: AnalysisResult) -> list[dict[str, object]]:
     rows = [
         _check_row(source="quality", feature=None, check=check)
         for check in result["quality"]["dataset_checks"]
@@ -123,8 +172,8 @@ def _quality_rows(result: AnalysisResult) -> list[dict[str, str]]:
     return rows
 
 
-def _drift_rows(result: AnalysisResult) -> list[dict[str, str]]:
-    rows: list[dict[str, str]] = []
+def _drift_rows(result: AnalysisResult) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
     for feature, feature_result in result["drift"]["features"].items():
         rows.extend(
             _check_row(source="drift", feature=feature, check=check)
@@ -136,6 +185,8 @@ def _drift_rows(result: AnalysisResult) -> list[dict[str, str]]:
 def _feature_rows(result: AnalysisResult) -> list[dict[str, object]]:
     return [
         {
+            "_status": feature_result["status"],
+            "_feature": feature,
             "Признак": feature,
             "Тип": feature_result["feature_type"],
             "Статус": _status_text(feature_result["status"]),
@@ -148,13 +199,64 @@ def _feature_rows(result: AnalysisResult) -> list[dict[str, object]]:
     ]
 
 
-def _render_alerts(result: AnalysisResult) -> None:
+def _visible_rows(
+    rows: list[dict[str, object]],
+    statuses: set[Status],
+    feature: str | None,
+) -> list[dict[str, object]]:
+    visible: list[dict[str, object]] = []
+    for row in rows:
+        if row["_status"] not in statuses:
+            continue
+        if feature is not None and row["_feature"] != feature:
+            continue
+        visible.append(
+            {key: value for key, value in row.items() if not key.startswith("_")}
+        )
+    return visible
+
+
+def _render_filters(result: AnalysisResult) -> tuple[set[Status], str | None]:
+    features = list(result["drift"]["features"])
+    with st.expander("Фильтры результата", expanded=False):
+        selected_statuses = st.multiselect(
+            "Статусы",
+            options=list(STATUS_VIEW),
+            default=list(STATUS_VIEW),
+            format_func=_status_text,
+            key=STATUS_FILTER_KEY,
+            help="Фильтр применяется к готовому результату и не запускает анализ повторно.",
+        )
+        selected_feature = st.selectbox(
+            "Признак",
+            options=["Все признаки", *features],
+            key=FEATURE_FILTER_KEY,
+        )
+    return set(cast(list[Status], selected_statuses)), (
+        None if selected_feature == "Все признаки" else selected_feature
+    )
+
+
+def _render_alerts(
+    result: AnalysisResult,
+    statuses: set[Status],
+    feature_filter: str | None,
+) -> None:
     st.subheader("Алерты")
-    if not result["alerts"]:
-        st.success("Алертов нет.")
+    alerts = [
+        alert
+        for alert in result["alerts"]
+        if alert["severity"] in statuses
+        and (feature_filter is None or alert["feature"] == feature_filter)
+    ]
+    if not alerts:
+        if result["alerts"]:
+            st.info("Нет алертов, соответствующих выбранным фильтрам.")
+        else:
+            st.success("Алертов нет.")
         return
 
-    for alert in result["alerts"]:
+    for alert in alerts:
         feature = f" · признак `{alert['feature']}`" if alert["feature"] else ""
         message = (
             f"**{alert['source']} / {alert['check']}**{feature}: {alert['message']}"
@@ -173,35 +275,43 @@ def _render_schema(result: AnalysisResult) -> None:
         st.json(result["schema"])
 
 
-def _render_quality(result: AnalysisResult) -> None:
+def _render_quality(
+    result: AnalysisResult,
+    statuses: set[Status],
+    feature_filter: str | None,
+) -> None:
     st.subheader("Data Quality")
     _show_status(result["quality"]["status"], prefix="Качество данных")
     if result["quality"]["reason"]:
         st.write(result["quality"]["reason"])
-    rows = _quality_rows(result)
+    rows = _visible_rows(_quality_rows(result), statuses, feature_filter)
     if rows:
         st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
     else:
-        st.info("Проверки качества не выполнялись.")
+        st.info("Нет проверок качества, соответствующих выбранным фильтрам.")
 
 
-def _render_drift(result: AnalysisResult) -> None:
+def _render_drift(
+    result: AnalysisResult,
+    statuses: set[Status],
+    feature_filter: str | None,
+) -> None:
     st.subheader("Data Drift")
     _show_status(result["drift"]["status"], prefix="Drift-проверки")
     if result["drift"]["reason"]:
         st.write(result["drift"]["reason"])
 
-    feature_rows = _feature_rows(result)
+    feature_rows = _visible_rows(_feature_rows(result), statuses, feature_filter)
     if feature_rows:
         st.markdown("#### Сводка по признакам")
         st.dataframe(pd.DataFrame(feature_rows), hide_index=True, width="stretch")
 
-    check_rows = _drift_rows(result)
+    check_rows = _visible_rows(_drift_rows(result), statuses, feature_filter)
     if check_rows:
         st.markdown("#### Метрики")
         st.dataframe(pd.DataFrame(check_rows), hide_index=True, width="stretch")
     elif not feature_rows:
-        st.info("Drift-метрики не рассчитывались.")
+        st.info("Нет drift-метрик, соответствующих выбранным фильтрам.")
 
 
 def _render_adversarial(result: AnalysisResult) -> None:
@@ -211,6 +321,12 @@ def _render_adversarial(result: AnalysisResult) -> None:
         expanded=adversarial["status"] not in {"ok", "skipped"},
     ):
         _show_status(adversarial["status"], prefix="ML-проверка")
+        st.caption(
+            "Стратегия split: "
+            f"{adversarial['split_strategy']} · group column: "
+            f"{_format_value(adversarial['group_column'])} · групп: "
+            f"{_format_value(adversarial['n_groups'])}"
+        )
         if adversarial["reason"]:
             st.write(adversarial["reason"])
         if adversarial["roc_auc"] is not None:
@@ -251,19 +367,24 @@ def _render_distribution(
     result: AnalysisResult,
     reference: pd.DataFrame,
     current: pd.DataFrame,
+    feature_filter: str | None,
 ) -> None:
     available_features = [
         feature
         for feature in result["drift"]["features"]
-        if feature in reference.columns and feature in current.columns
+        if feature in reference.columns
+        and feature in current.columns
+        and (feature_filter is None or feature == feature_filter)
     ]
     if not available_features:
         st.info("Нет общего корректного признака для построения графика.")
         return
 
+    if st.session_state.get(FEATURE_WIDGET_KEY) not in available_features:
+        st.session_state.pop(FEATURE_WIDGET_KEY, None)
     st.subheader("Сравнение распределений")
     selected_feature = st.selectbox(
-        "Признак",
+        "Признак для графика",
         available_features,
         key=FEATURE_WIDGET_KEY,
     )
@@ -280,12 +401,41 @@ def _render_distribution(
     st.plotly_chart(figure, width="stretch")
 
 
+def _render_downloads(json_content: bytes, html_content: bytes) -> None:
+    st.subheader("Выгрузка результата")
+    first, second = st.columns(2)
+    first.download_button(
+        "Скачать JSON",
+        data=json_content,
+        file_name="data_drift_result.json",
+        mime="application/json",
+        key="download_json",
+        width="stretch",
+    )
+    second.download_button(
+        "Скачать автономный HTML",
+        data=html_content,
+        file_name="data_drift_report.html",
+        mime="text/html",
+        key="download_html",
+        width="stretch",
+    )
+    st.caption(
+        "Оба файла созданы из сохранённого результата; скачивание и фильтрация "
+        "не запускают статистический анализ повторно."
+    )
+
+
 def render_result(
     result: AnalysisResult,
     reference: pd.DataFrame,
     current: pd.DataFrame,
+    *,
+    elapsed_seconds: float,
+    json_content: bytes,
+    html_content: bytes,
 ) -> None:
-    """Показать единый результат анализа без повторного вычисления метрик."""
+    """Показать единый сохранённый результат без повторного вычисления метрик."""
     st.header("Результат анализа")
     _show_status(result["summary"]["status"])
 
@@ -296,15 +446,63 @@ def render_result(
     fourth.metric("Алертов", result["summary"]["n_alerts"])
     st.caption(
         f"Версия контракта: {result['contract_version']} · "
-        f"seed: {result['metadata']['random_seed']}"
+        f"seed: {result['metadata']['random_seed']} · "
+        f"загрузка и анализ: {elapsed_seconds:.3f} с"
     )
 
-    _render_alerts(result)
+    _render_downloads(json_content, html_content)
+    with st.expander("Фактически применённая конфигурация", expanded=False):
+        st.json(result["effective_config"])
+
+    statuses, feature_filter = _render_filters(result)
+    _render_alerts(result, statuses, feature_filter)
     _render_schema(result)
-    _render_quality(result)
-    _render_drift(result)
+    _render_quality(result, statuses, feature_filter)
+    _render_drift(result, statuses, feature_filter)
     _render_adversarial(result)
-    _render_distribution(result, reference, current)
+    _render_distribution(result, reference, current, feature_filter)
+
+
+def _apply_adversarial_override(
+    config: AnalysisConfig,
+    *,
+    override: bool,
+    enabled: bool,
+    use_auc_threshold: bool,
+    auc_threshold: float,
+) -> AnalysisConfig:
+    effective_config = deepcopy(config)
+    if not override:
+        return effective_config
+
+    effective_config["adversarial"]["enabled"] = enabled
+    effective_config["adversarial"]["roc_auc_threshold"] = (
+        float(auc_threshold) if use_auc_threshold else None
+    )
+    return validate_config(effective_config)
+
+
+def _build_download_artifacts(
+    result: AnalysisResult,
+    reference: pd.DataFrame,
+    current: pd.DataFrame,
+) -> tuple[bytes, bytes]:
+    json_content = json.dumps(
+        result,
+        ensure_ascii=False,
+        indent=2,
+        allow_nan=False,
+    ).encode("utf-8")
+    with TemporaryDirectory(prefix="data-drift-report-") as temporary_directory:
+        html_path = Path(temporary_directory) / "report.html"
+        export_html(
+            result,
+            html_path,
+            reference=reference,
+            current=current,
+        )
+        html_content = html_path.read_bytes()
+    return json_content, html_content
 
 
 def _run_analysis(
@@ -313,12 +511,17 @@ def _run_analysis(
     *,
     use_default_config: bool,
     config_file: UploadedFileLike | None,
+    override_adversarial: bool,
+    adversarial_enabled: bool,
+    use_auc_threshold: bool,
+    auc_threshold: float,
 ) -> None:
     if reference_file is None or current_file is None:
         raise ValueError("Загрузите оба файла: Reference и Current.")
     if not use_default_config and config_file is None:
         raise ValueError("Загрузите YAML-конфигурацию или выберите встроенную.")
 
+    started_at = perf_counter()
     reference = load_uploaded_table(reference_file)
     current = load_uploaded_table(current_file)
     config = (
@@ -326,11 +529,28 @@ def _run_analysis(
         if use_default_config
         else load_uploaded_config(config_file)
     )
-    result = analyze(reference, current, config=config)
+    effective_config = _apply_adversarial_override(
+        config,
+        override=override_adversarial,
+        enabled=adversarial_enabled,
+        use_auc_threshold=use_auc_threshold,
+        auc_threshold=auc_threshold,
+    )
+    result = analyze(reference, current, config=effective_config)
+    elapsed_seconds = perf_counter() - started_at
+    json_content, html_content = _build_download_artifacts(
+        result,
+        reference,
+        current,
+    )
     st.session_state[ANALYSIS_STATE_KEY] = {
         "result": result,
         "reference": reference,
         "current": current,
+        "elapsed_seconds": elapsed_seconds,
+        "json_content": json_content,
+        "html_content": html_content,
+        "stale": False,
     }
 
 
@@ -348,21 +568,21 @@ def main() -> None:
             "Reference",
             type=["csv", "parquet"],
             key="reference_file",
-            on_change=clear_analysis,
+            on_change=mark_analysis_stale,
             help="Эталонная выборка в формате CSV или Parquet.",
         )
         current_file = st.file_uploader(
             "Current",
             type=["csv", "parquet"],
             key="current_file",
-            on_change=clear_analysis,
+            on_change=mark_analysis_stale,
             help="Текущая выборка в формате CSV или Parquet.",
         )
         config_source = st.radio(
             "Конфигурация",
             ["Встроенная", "Загрузить YAML"],
             key="config_source",
-            on_change=clear_analysis,
+            on_change=mark_analysis_stale,
         )
         config_file = None
         if config_source == "Загрузить YAML":
@@ -370,10 +590,50 @@ def main() -> None:
                 "YAML-конфигурация",
                 type=["yaml", "yml"],
                 key="config_file",
-                on_change=clear_analysis,
+                on_change=mark_analysis_stale,
             )
         else:
             st.caption("Используется `configs/default.yaml`.")
+
+        st.markdown("#### Adversarial Validation")
+        override_adversarial = st.checkbox(
+            "Переопределить настройки YAML",
+            key=ADVERSARIAL_OVERRIDE_KEY,
+            on_change=mark_analysis_stale,
+            help="Изменения применяются к копии загруженной конфигурации.",
+        )
+        adversarial_enabled = False
+        use_auc_threshold = False
+        auc_threshold = 0.70
+        if override_adversarial:
+            adversarial_enabled = st.checkbox(
+                "Включить ML-проверку",
+                value=True,
+                key=ADVERSARIAL_ENABLED_KEY,
+                on_change=mark_analysis_stale,
+            )
+            use_auc_threshold = st.checkbox(
+                "Использовать порог ROC-AUC",
+                value=True,
+                key=USE_AUC_THRESHOLD_KEY,
+                on_change=mark_analysis_stale,
+            )
+            if use_auc_threshold:
+                auc_threshold = float(
+                    st.number_input(
+                        "Порог ROC-AUC",
+                        min_value=0.0,
+                        max_value=1.0,
+                        value=0.70,
+                        step=0.01,
+                        key=AUC_THRESHOLD_KEY,
+                        on_change=mark_analysis_stale,
+                    )
+                )
+            else:
+                st.caption("Результат AUC будет показан без решения об алерте.")
+        else:
+            st.caption("Используются настройки секции `adversarial` из YAML.")
 
         run_requested = st.button(
             "Запустить анализ",
@@ -386,12 +646,18 @@ def main() -> None:
     if run_requested:
         clear_analysis()
         try:
-            with st.spinner("Читаем данные и рассчитываем проверки…"):
+            with st.spinner(
+                "Читаем данные, рассчитываем проверки и готовим выгрузки…"
+            ):
                 _run_analysis(
                     reference_file,
                     current_file,
                     use_default_config=config_source == "Встроенная",
                     config_file=config_file,
+                    override_adversarial=override_adversarial,
+                    adversarial_enabled=adversarial_enabled,
+                    use_auc_threshold=use_auc_threshold,
+                    auc_threshold=auc_threshold,
                 )
         except Exception as exc:  # UI обязан превратить ошибку входа в сообщение.
             st.error(f"Не удалось выполнить анализ: {type(exc).__name__}: {exc}")
@@ -400,11 +666,20 @@ def main() -> None:
     if payload is None:
         st.info("Загрузите две таблицы и явно запустите анализ.")
         return
+    if payload.get("stale"):
+        st.warning(
+            "Входные файлы или настройки изменились. Сохранённый результат "
+            "помечен как неактуальный; запустите анализ повторно."
+        )
+        return
 
     render_result(
         payload["result"],
         payload["reference"],
         payload["current"],
+        elapsed_seconds=payload["elapsed_seconds"],
+        json_content=payload["json_content"],
+        html_content=payload["html_content"],
     )
 
 

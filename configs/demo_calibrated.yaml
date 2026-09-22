@@ -1,0 +1,58 @@
+# Только для синтетической демонстрации Data Drift Guardian.
+# Это не production-калибровка: пороги-кандидаты выбраны по управляемым
+# сценариям генератора и должны быть перепроверены на исторических данных,
+# стоимости ошибок и реальных размерах батчей конкретного бизнеса.
+contract_version: "0.2"
+random_seed: 42
+
+schema:
+  allow_extra_columns: false
+  features:
+    age:
+      kind: numeric
+      nullable: true
+      min: 18
+      max: 100
+    income:
+      kind: numeric
+      nullable: true
+      min: 0
+      max: 1000000
+    region:
+      kind: categorical
+      nullable: true
+
+quality:
+  max_missing_fraction: 0.10
+  max_missing_increase_pp: 5.0
+  max_duplicate_fraction: 0.01
+
+drift:
+  numeric_methods: [ks, wasserstein, psi, js]
+  categorical_methods: [chi2, psi, js]
+  alpha: 0.05
+  multiple_testing: bh
+  n_bins: 10
+  psi_smoothing: 0.000001
+  js_base: 2
+  # PSI/JS безразмерны, поэтому эти demo-specific пороги являются общими.
+  distance_thresholds:
+    wasserstein: null
+    psi: 0.10
+    js: 0.05
+  feature_thresholds:
+    # Wasserstein измеряется в единицах признака: для age порог равен 3 годам.
+    age:
+      wasserstein: 3.0
+    # Явный null не позволяет ошибочно применить возрастной порог к доходу.
+    income:
+      wasserstein: null
+
+adversarial:
+  enabled: true
+  n_splits: 3
+  # Исследовательская demo-граница, не доказательство concept drift.
+  roc_auc_threshold: 0.70
+  exclude_columns: []
+  # В синтетике нет повторяющихся entity ID, поэтому фиксирован StratifiedKFold.
+  group_column: null
