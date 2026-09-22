@@ -1,0 +1,319 @@
+{
+  "schema_version": "1.0",
+  "created_at_utc": "2026-09-22T11:58:02.067967+00:00",
+  "purpose": "demo-specific synthetic calibration",
+  "warning": "Наблюдаемые доли являются первичной инженерной оценкой на синтетической сетке, а не гарантией для будущих production-данных.",
+  "git": {
+    "commit_sha": "509c56e4630c19b10684cda4fdeed3d2d60e7dc3",
+    "branch": "pavel",
+    "dirty": false
+  },
+  "config": {
+    "path": "configs/demo_calibrated.yaml",
+    "sha256": "05b7bab4beef95cc077c40c8cc949baf46a83e36cf9903f6bc97f9f5bcbe3253",
+    "adversarial_enabled": true
+  },
+  "environment": {
+    "python": "3.13.7",
+    "implementation": "CPython",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "packages": {
+      "data-drift-guardian": "0.1.0",
+      "numpy": "2.5.3",
+      "pandas": "3.0.5",
+      "scipy": "1.18.1",
+      "scikit-learn": "1.9.0",
+      "lightgbm": "4.7.0",
+      "plotly": "6.9.0",
+      "streamlit": "1.63.0",
+      "PyYAML": "6.0.3",
+      "pyarrow": "23.0.1",
+      "pytest": "9.1.1"
+    }
+  },
+  "grid": {
+    "seeds": [
+      2026091900,
+      2026091901,
+      2026091902,
+      2026091903,
+      2026091904,
+      2026091905,
+      2026091906,
+      2026091907,
+      2026091908,
+      2026091909,
+      2026091910,
+      2026091911,
+      2026091912,
+      2026091913,
+      2026091914,
+      2026091915,
+      2026091916,
+      2026091917,
+      2026091918,
+      2026091919
+    ],
+    "n_reference": 5000,
+    "reference_missing_fraction": 0.02,
+    "cases": [
+      {
+        "case_id": "control_n500",
+        "scenario": "none",
+        "drift_family": "control",
+        "drift_level": "control",
+        "n_current": 500,
+        "age_shift_years": 0.0,
+        "current_missing_fraction": 0.02
+      },
+      {
+        "case_id": "numeric_weak_shift2_n500",
+        "scenario": "numeric",
+        "drift_family": "numeric",
+        "drift_level": "weak",
+        "n_current": 500,
+        "age_shift_years": 2.0,
+        "current_missing_fraction": 0.02
+      },
+      {
+        "case_id": "numeric_medium_shift4_n500",
+        "scenario": "numeric",
+        "drift_family": "numeric",
+        "drift_level": "medium",
+        "n_current": 500,
+        "age_shift_years": 4.0,
+        "current_missing_fraction": 0.02
+      },
+      {
+        "case_id": "numeric_strong_shift8_n500",
+        "scenario": "numeric",
+        "drift_family": "numeric",
+        "drift_level": "strong",
+        "n_current": 500,
+        "age_shift_years": 8.0,
+        "current_missing_fraction": 0.02
+      },
+      {
+        "case_id": "missingness_weak_fraction0p04_n500",
+        "scenario": "missingness",
+        "drift_family": "missingness",
+        "drift_level": "weak",
+        "n_current": 500,
+        "age_shift_years": 0.0,
+        "current_missing_fraction": 0.04
+      },
+      {
+        "case_id": "missingness_medium_fraction0p08_n500",
+        "scenario": "missingness",
+        "drift_family": "missingness",
+        "drift_level": "medium",
+        "n_current": 500,
+        "age_shift_years": 0.0,
+        "current_missing_fraction": 0.08
+      },
+      {
+        "case_id": "missingness_strong_fraction0p15_n500",
+        "scenario": "missingness",
+        "drift_family": "missingness",
+        "drift_level": "strong",
+        "n_current": 500,
+        "age_shift_years": 0.0,
+        "current_missing_fraction": 0.15
+      },
+      {
+        "case_id": "categorical_standard_n500",
+        "scenario": "categorical",
+        "drift_family": "categorical",
+        "drift_level": "standard",
+        "n_current": 500,
+        "age_shift_years": 0.0,
+        "current_missing_fraction": 0.02
+      },
+      {
+        "case_id": "combined_acceptance_n500",
+        "scenario": "combined",
+        "drift_family": "combined",
+        "drift_level": "acceptance",
+        "n_current": 500,
+        "age_shift_years": 8.0,
+        "current_missing_fraction": 0.08
+      },
+      {
+        "case_id": "control_n1200",
+        "scenario": "none",
+        "drift_family": "control",
+        "drift_level": "control",
+        "n_current": 1200,
+        "age_shift_years": 0.0,
+        "current_missing_fraction": 0.02
+      },
+      {
+        "case_id": "numeric_weak_shift2_n1200",
+        "scenario": "numeric",
+        "drift_family": "numeric",
+        "drift_level": "weak",
+        "n_current": 1200,
+        "age_shift_years": 2.0,
+        "current_missing_fraction": 0.02
+      },
+      {
+        "case_id": "numeric_medium_shift4_n1200",
+        "scenario": "numeric",
+        "drift_family": "numeric",
+        "drift_level": "medium",
+        "n_current": 1200,
+        "age_shift_years": 4.0,
+        "current_missing_fraction": 0.02
+      },
+      {
+        "case_id": "numeric_strong_shift8_n1200",
+        "scenario": "numeric",
+        "drift_family": "numeric",
+        "drift_level": "strong",
+        "n_current": 1200,
+        "age_shift_years": 8.0,
+        "current_missing_fraction": 0.02
+      },
+      {
+        "case_id": "missingness_weak_fraction0p04_n1200",
+        "scenario": "missingness",
+        "drift_family": "missingness",
+        "drift_level": "weak",
+        "n_current": 1200,
+        "age_shift_years": 0.0,
+        "current_missing_fraction": 0.04
+      },
+      {
+        "case_id": "missingness_medium_fraction0p08_n1200",
+        "scenario": "missingness",
+        "drift_family": "missingness",
+        "drift_level": "medium",
+        "n_current": 1200,
+        "age_shift_years": 0.0,
+        "current_missing_fraction": 0.08
+      },
+      {
+        "case_id": "missingness_strong_fraction0p15_n1200",
+        "scenario": "missingness",
+        "drift_family": "missingness",
+        "drift_level": "strong",
+        "n_current": 1200,
+        "age_shift_years": 0.0,
+        "current_missing_fraction": 0.15
+      },
+      {
+        "case_id": "categorical_standard_n1200",
+        "scenario": "categorical",
+        "drift_family": "categorical",
+        "drift_level": "standard",
+        "n_current": 1200,
+        "age_shift_years": 0.0,
+        "current_missing_fraction": 0.02
+      },
+      {
+        "case_id": "combined_acceptance_n1200",
+        "scenario": "combined",
+        "drift_family": "combined",
+        "drift_level": "acceptance",
+        "n_current": 1200,
+        "age_shift_years": 8.0,
+        "current_missing_fraction": 0.08
+      },
+      {
+        "case_id": "control_n3000",
+        "scenario": "none",
+        "drift_family": "control",
+        "drift_level": "control",
+        "n_current": 3000,
+        "age_shift_years": 0.0,
+        "current_missing_fraction": 0.02
+      },
+      {
+        "case_id": "numeric_weak_shift2_n3000",
+        "scenario": "numeric",
+        "drift_family": "numeric",
+        "drift_level": "weak",
+        "n_current": 3000,
+        "age_shift_years": 2.0,
+        "current_missing_fraction": 0.02
+      },
+      {
+        "case_id": "numeric_medium_shift4_n3000",
+        "scenario": "numeric",
+        "drift_family": "numeric",
+        "drift_level": "medium",
+        "n_current": 3000,
+        "age_shift_years": 4.0,
+        "current_missing_fraction": 0.02
+      },
+      {
+        "case_id": "numeric_strong_shift8_n3000",
+        "scenario": "numeric",
+        "drift_family": "numeric",
+        "drift_level": "strong",
+        "n_current": 3000,
+        "age_shift_years": 8.0,
+        "current_missing_fraction": 0.02
+      },
+      {
+        "case_id": "missingness_weak_fraction0p04_n3000",
+        "scenario": "missingness",
+        "drift_family": "missingness",
+        "drift_level": "weak",
+        "n_current": 3000,
+        "age_shift_years": 0.0,
+        "current_missing_fraction": 0.04
+      },
+      {
+        "case_id": "missingness_medium_fraction0p08_n3000",
+        "scenario": "missingness",
+        "drift_family": "missingness",
+        "drift_level": "medium",
+        "n_current": 3000,
+        "age_shift_years": 0.0,
+        "current_missing_fraction": 0.08
+      },
+      {
+        "case_id": "missingness_strong_fraction0p15_n3000",
+        "scenario": "missingness",
+        "drift_family": "missingness",
+        "drift_level": "strong",
+        "n_current": 3000,
+        "age_shift_years": 0.0,
+        "current_missing_fraction": 0.15
+      },
+      {
+        "case_id": "categorical_standard_n3000",
+        "scenario": "categorical",
+        "drift_family": "categorical",
+        "drift_level": "standard",
+        "n_current": 3000,
+        "age_shift_years": 0.0,
+        "current_missing_fraction": 0.02
+      },
+      {
+        "case_id": "combined_acceptance_n3000",
+        "scenario": "combined",
+        "drift_family": "combined",
+        "drift_level": "acceptance",
+        "n_current": 3000,
+        "age_shift_years": 8.0,
+        "current_missing_fraction": 0.08
+      }
+    ]
+  },
+  "execution": {
+    "elapsed_seconds": 172.0800525000086,
+    "case_count": 27,
+    "analysis_run_count": 540,
+    "control_run_count": 60,
+    "minimum_control_runs_satisfied": true,
+    "decision_row_count": 18900,
+    "summary_row_count": 945
+  },
+  "artifacts": {
+    "runs": "calibration_runs.csv",
+    "summary": "calibration_summary.csv",
+    "metadata": "calibration_metadata.json"
+  }
+}
