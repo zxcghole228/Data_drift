@@ -18,6 +18,8 @@ dependencies = [
     "streamlit>=1.35,<2",
     "PyYAML>=6,<7",
     "pyarrow>=16,<24",
+    "fastapi>=0.141,<1",
+    "uvicorn>=0.53,<1",
 ]
 
 [project.optional-dependencies]
@@ -25,6 +27,7 @@ dev = [
     "pytest>=8,<10",
     "jupyter>=1,<2",
     "nbformat>=5.10,<6",
+    "httpx2>=2.13,<3",
 ]
 
 [tool.setuptools.packages.find]
@@ -33,3 +36,9 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+    "online_smoke: быстрый сквозной smoke persistent online-контура",
+]
+filterwarnings = [
+    'ignore:The anyio\.abc\.BlockingPortal alias is deprecated.*:DeprecationWarning:starlette\.testclient',
+]

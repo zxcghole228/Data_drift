@@ -21,7 +21,10 @@ RUN python -m pip install --requirement requirements-runtime.txt \
 
 COPY --chown=app:app app ./app
 COPY --chown=app:app configs ./configs
+RUN mkdir -p data/online outputs/online \
+    && chown -R app:app data outputs
 
+EXPOSE 8000
 EXPOSE 8501
 
 USER app

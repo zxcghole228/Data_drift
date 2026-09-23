@@ -3,7 +3,9 @@
 Реализованы unit-тесты отдельных модулей,
 [интеграционные тесты общего pipeline](integration/test_pipeline.py),
 [проверки CLI](integration/test_cli.py) и
-[проверки Streamlit-интерфейса](integration/test_streamlit_app.py). Каждый
+[проверки Streamlit-интерфейса](integration/test_streamlit_app.py), включая
+[online-историю](integration/test_online_dashboard.py), и
+[online acceptance](acceptance/test_online_acceptance.py). Каждый
 участник добавляет содержательные проверки одновременно со своим модулем.
 
 | Область | Что проверять | Автор |
@@ -25,8 +27,22 @@
 | Notebook | Последовательное выполнение всех кодовых ячеек и четыре сценария | Михаил и Павел |
 | Калибровка | Сетка случаев, воспроизводимость, диагностики, типы наблюдаемых долей, атомарная запись CSV/JSON | Михаил |
 | Deployment | Docker non-root/healthcheck, runtime-зависимости, `.dockerignore` и обязательные шаги CI | Павел |
+| Online acceptance | Рестарт окна, none/combined, идемпотентность, отказ webhook и сохранение Run | Павел |
 
-`unit/` предназначен для тестов отдельных модулей, `integration/` — для общего API.
+`unit/` предназначен для отдельных модулей, `integration/` — для общего API и
+интерфейсов, `acceptance/` — для сквозного публичного online-контракта.
+
+Быстрый online smoke:
+
+```bash
+python -m pytest -q -m online_smoke tests/acceptance
+```
+
+Полная online-приёмка:
+
+```bash
+python -m pytest -q tests/acceptance/test_online_acceptance.py
+```
 
 Запускать `python -m pytest` из корня репозитория. Для статистических свойств не требовать, чтобы любая независимая выборка без дрейфа всегда давала p-value > 0.05; отделять детерминированные проверки формул от экспериментов с ложными тревогами.
 

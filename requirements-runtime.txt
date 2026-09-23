@@ -9,3 +9,5 @@ plotly==6.9.0
 streamlit==1.63.0
 PyYAML==6.0.3
 pyarrow==23.0.1
+fastapi==0.141.1
+uvicorn==0.53.0
