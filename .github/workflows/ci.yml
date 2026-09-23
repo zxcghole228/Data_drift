@@ -40,6 +40,9 @@ jobs:
       - name: Check environment imports
         run: python scripts/check_environment.py
 
+      - name: Run online persistence smoke
+        run: python -m pytest -q -m online_smoke tests/acceptance
+
       - name: Run complete test suite
         run: python -m pytest -q
 

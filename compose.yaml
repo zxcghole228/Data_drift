@@ -1,0 +1,82 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: data-drift-guardian:online
+    command:
+      - python
+      - -m
+      - data_drift_guardian.online
+      - --config
+      - /app/configs/online.yaml
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+    environment:
+      DDG_ONLINE_CONFIG: /app/configs/online.yaml
+      DDG_ONLINE_STATE: /app/data/online/monitoring.sqlite3
+      DDG_ALERT_WEBHOOK_URL: ${DDG_ALERT_WEBHOOK_URL:-}
+    init: true
+    user: "10001:10001"
+    restart: unless-stopped
+    ports:
+      - "${DDG_API_PORT:-8000}:8000"
+    volumes:
+      - online-state:/app/data/online
+      - online-outputs:/app/outputs/online
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request; response = urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=3); raise SystemExit(0 if response.status == 200 else 1)
+      interval: 10s
+      timeout: 5s
+      start_period: 15s
+      retries: 5
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: data-drift-guardian:online
+    command:
+      - python
+      - -m
+      - streamlit
+      - run
+      - app/streamlit_app.py
+      - --server.address=0.0.0.0
+      - --server.port=8501
+    environment:
+      DDG_ONLINE_CONFIG: /app/configs/online.yaml
+      DDG_ONLINE_STATE: /app/data/online/monitoring.sqlite3
+    init: true
+    user: "10001:10001"
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${DDG_DASHBOARD_PORT:-8501}:8501"
+    volumes:
+      - online-state:/app/data/online
+      - online-outputs:/app/outputs/online
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request; response = urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=3); raise SystemExit(0 if response.status == 200 else 1)
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 5
+
+volumes:
+  online-state:
+  online-outputs:

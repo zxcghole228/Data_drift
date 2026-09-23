@@ -34,6 +34,9 @@ PACKAGES: tuple[tuple[str, str], ...] = (
     ("streamlit", "streamlit"),
     ("PyYAML", "yaml"),
     ("pyarrow", "pyarrow"),
+    ("fastapi", "fastapi"),
+    ("uvicorn", "uvicorn"),
+    ("httpx2", "httpx2"),
     ("pytest", "pytest"),
 )
 

@@ -1,0 +1,73 @@
+# Локальная демонстрационная конфигурация online-мониторинга.
+contract_version: "0.2"
+random_seed: 42
+
+schema:
+  allow_extra_columns: false
+  features:
+    age:
+      kind: numeric
+      nullable: true
+      min: 18
+      max: 100
+    income:
+      kind: numeric
+      nullable: true
+      min: 0
+      max: 1000000
+    region:
+      kind: categorical
+      nullable: true
+
+quality:
+  max_missing_fraction: 0.10
+  max_missing_increase_pp: 5.0
+  max_duplicate_fraction: 0.01
+
+drift:
+  numeric_methods: [ks, wasserstein, psi, js]
+  categorical_methods: [chi2, psi, js]
+  alpha: 0.05
+  multiple_testing: bh
+  n_bins: 10
+  psi_smoothing: 0.000001
+  js_base: 2
+  distance_thresholds:
+    # Wasserstein измеряется в единицах конкретного признака, поэтому общий
+    # абсолютный порог для возраста и дохода намеренно не используется.
+    wasserstein: null
+    psi: 0.20
+    js: 0.10
+  feature_thresholds:
+    age:
+      wasserstein: 3.0
+    income:
+      wasserstein: null
+
+adversarial:
+  enabled: true
+  n_splits: 3
+  roc_auc_threshold: 0.70
+  exclude_columns: []
+  group_column: null
+
+online:
+  enabled: true
+  state_path: data/online/monitoring.sqlite3
+  max_request_bytes: 25000000
+  window:
+    strategy: tumbling
+    size: 500
+    min_batch_rows: 100
+  alerts:
+    jsonl_path: outputs/online/alerts.jsonl
+    webhook_url_env: DDG_ALERT_WEBHOOK_URL
+    timeout_seconds: 5.0
+    max_attempts: 3
+  performance:
+    enabled: false
+    min_feedback_rows: 100
+    baseline_accuracy: null
+    max_accuracy_drop: null
+    baseline_roc_auc: null
+    max_roc_auc_drop: null

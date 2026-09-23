@@ -18,7 +18,16 @@ Adversarial Validation возвращает OOF ROC-AUC по LightGBM, знач�
 порогами и интерактивными распределениями. Итоговый текст проекта и скринкаст
 пока остаются незавершёнными требованиями к 27.09.
 
-Цель первой недели — первый совместный проход данных через систему и проверка основных модулей. Это промежуточный результат, а не финальная сдача.
+Проверенный release candidate — `main` `c33d95b`: локально получены
+`296 passed`, Docker UID 10001 и healthcheck `healthy`/`ok`; Python и Docker
+job на merge commit также зелёные. Калибровка выполнила 540 анализов и сохранена
+в `report/experiments/`. Итоги и ограничения:
+[docs/week2_19_20_handoff.md](docs/week2_19_20_handoff.md).
+
+Текущий release candidate является offline/batch-анализатором. Online-источник
+батчей, состояние Reference, расписание, история и доставка алертов намеренно
+оставлены для следующего плана; называть текущую версию continuously running
+production-сервисом нельзя.
 
 ## Что должно быть в итоговом решении
 
@@ -102,6 +111,14 @@ python -m pip install -r requirements.txt
 ```bash
 python -m streamlit run app/streamlit_app.py
 ```
+
+В боковой панели доступны два режима. **Офлайн-анализ** работает с загруженными
+Reference/Current, а **Online-мониторинг** читает сохранённое SQLite-состояние и
+показывает активный Reference, буфер, историю Run, алерты, доставки и оценки по
+запаздывающему Feedback. По умолчанию используются `configs/online.yaml` и
+указанный в нём `online.state_path`; пути можно переопределить переменными
+`DDG_ONLINE_CONFIG` и `DDG_ONLINE_STATE`. Просмотр истории не запускает pipeline
+повторно.
 
 После запуска:
 
@@ -238,18 +255,19 @@ python -m jupyter notebook notebooks/demo.ipynb
 контроль на пяти seed и показывает те же результаты, которые читает дашборд.
 Фактические наблюдения записаны в [docs/experiments.md](docs/experiments.md).
 
-Docker-образ со Streamlit собирается и запускается командами:
+Online API и Streamlit запускаются одним Compose-проектом:
 
 ```bash
-docker build --tag data-drift-guardian:local .
-docker run --detach --name data-drift-guardian \
-  --publish 8501:8501 data-drift-guardian:local
-docker inspect --format '{{.State.Health.Status}}' data-drift-guardian
+docker compose up --detach --build
+docker compose ps
 ```
 
-После статуса `healthy` интерфейс доступен на `http://localhost:8501`.
-Приложение работает от непривилегированного пользователя. Полная инструкция,
-диагностика и состав автоматических проверок:
+После статуса `healthy` API доступен на `http://localhost:8000`, документация
+OpenAPI — на `/docs`, а интерфейс — на `http://localhost:8501`. Оба процесса
+работают от UID/GID `10001`, используют общий persistent SQLite volume и volume
+для JSONL-алертов. Порты и необязательный webhook настраиваются через `.env` по
+образцу [.env.example](.env.example). Полная инструкция, проверка readiness,
+рестарта и сохранения состояния:
 [docs/deployment.md](docs/deployment.md). Pull request в `main` также запускает
 полные тесты Python 3.13 и Docker build/healthcheck через GitHub Actions.
 

@@ -16,10 +16,13 @@ from data_drift_guardian import analyze
 from data_drift_guardian.config import load_config, validate_config
 from data_drift_guardian.contracts import AnalysisConfig, AnalysisResult, Status
 from data_drift_guardian.ingestion import load_table
+from data_drift_guardian.online.dashboard import render_online_dashboard
 from data_drift_guardian.reporting import distribution_figure, export_html
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "configs" / "default.yaml"
+DEFAULT_ONLINE_CONFIG_PATH = PROJECT_ROOT / "configs" / "online.yaml"
+APP_MODE_KEY = "application_mode"
 ANALYSIS_STATE_KEY = "analysis_payload"
 FEATURE_WIDGET_KEY = "distribution_feature"
 STATUS_FILTER_KEY = "result_status_filter"
@@ -213,7 +216,33 @@ def _visible_rows(
         visible.append(
             {key: value for key, value in row.items() if not key.startswith("_")}
         )
-    return visible
+    if not visible:
+        return visible
+
+    empty_values = (None, "", "—")
+    empty_columns = {
+        key
+        for key in visible[0]
+        if all(row.get(key) in empty_values for row in visible)
+    }
+    return [
+        {key: value for key, value in row.items() if key not in empty_columns}
+        for row in visible
+    ]
+
+
+def _table_height(row_count: int, *, maximum_rows: int = 10) -> int:
+    visible_rows = min(max(row_count, 1), maximum_rows)
+    return 39 + visible_rows * 35
+
+
+def _show_dataframe(frame: pd.DataFrame) -> None:
+    st.dataframe(
+        frame,
+        hide_index=True,
+        width="stretch",
+        height=_table_height(len(frame)),
+    )
 
 
 def _render_filters(result: AnalysisResult) -> tuple[set[Status], str | None]:
@@ -286,7 +315,7 @@ def _render_quality(
         st.write(result["quality"]["reason"])
     rows = _visible_rows(_quality_rows(result), statuses, feature_filter)
     if rows:
-        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+        _show_dataframe(pd.DataFrame(rows))
     else:
         st.info("Нет проверок качества, соответствующих выбранным фильтрам.")
 
@@ -304,12 +333,12 @@ def _render_drift(
     feature_rows = _visible_rows(_feature_rows(result), statuses, feature_filter)
     if feature_rows:
         st.markdown("#### Сводка по признакам")
-        st.dataframe(pd.DataFrame(feature_rows), hide_index=True, width="stretch")
+        _show_dataframe(pd.DataFrame(feature_rows))
 
     check_rows = _visible_rows(_drift_rows(result), statuses, feature_filter)
     if check_rows:
         st.markdown("#### Метрики")
-        st.dataframe(pd.DataFrame(check_rows), hide_index=True, width="stretch")
+        _show_dataframe(pd.DataFrame(check_rows))
     elif not feature_rows:
         st.info("Нет drift-метрик, соответствующих выбранным фильтрам.")
 
@@ -338,15 +367,13 @@ def _render_adversarial(result: AnalysisResult) -> None:
             )
         if adversarial["fold_auc"]:
             st.markdown("#### ROC-AUC по фолдам")
-            st.dataframe(
+            _show_dataframe(
                 pd.DataFrame(
                     {
                         "Фолд": range(1, len(adversarial["fold_auc"]) + 1),
                         "ROC-AUC": adversarial["fold_auc"],
                     }
-                ),
-                hide_index=True,
-                width="stretch",
+                )
             )
         if adversarial["feature_importance"]:
             st.markdown("#### Важности признаков")
@@ -356,7 +383,7 @@ def _render_adversarial(result: AnalysisResult) -> None:
                     for feature, value in adversarial["feature_importance"].items()
                 ]
             )
-            st.dataframe(importance, hide_index=True, width="stretch")
+            _show_dataframe(importance)
             st.caption(
                 f"Тип: {adversarial['importance_type']}. Важность показывает "
                 "вклад в различение выборок, но не причинный эффект."
@@ -556,6 +583,17 @@ def _run_analysis(
 
 def main() -> None:
     st.set_page_config(page_title="Data Drift Guardian", page_icon="🛡️", layout="wide")
+    with st.sidebar:
+        application_mode = st.radio(
+            "Режим",
+            ["Офлайн-анализ", "Online-мониторинг"],
+            key=APP_MODE_KEY,
+        )
+
+    if application_mode == "Online-мониторинг":
+        render_online_dashboard(DEFAULT_ONLINE_CONFIG_PATH)
+        return
+
     st.title("🛡️ Data Drift Guardian")
     st.write(
         "Сравните эталонную и текущую таблицы, проверьте качество данных "

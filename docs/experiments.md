@@ -90,6 +90,21 @@ unit/integration-тестами Data Quality. В notebook первая неде�
 
 Полный протокол, команды, смысл `false_alert_rate`/`detection_rate` и
 зафиксированный приёмочный сценарий для CLI, HTML и Streamlit описаны в
-[calibration.md](calibration.md). Численные результаты не вписываются в этот
-документ заранее: источником фактов являются CSV/JSON, созданные полным
-прогоном из сохранённого коммита.
+[calibration.md](calibration.md).
+
+Фактический полный прогон выполнен из чистого commit `509c56e` за 172.08 с:
+27 случаев × 20 seed = 540 анализов, включая 60 контролей. Получено 18 900
+строк отдельных решений и 945 строк агрегированной сводки. Источником точных
+значений остаются закоммиченные `calibration_runs.csv`,
+`calibration_summary.csv` и `calibration_metadata.json`.
+
+Общий приёмочный сценарий `combined` с seed 42, Reference 5 000 и Current 1 200
+строк дал статус `warning` и 9 алертов. Для `age` Wasserstein равен 8.4384 при
+feature-пороге 3.0; для `region` Cramér's V равен 0.195349; OOF ROC-AUC равен
+0.735718 при demo-пороге 0.70 и стратегии `stratified_kfold`. CLI, JSON/HTML и
+ручной Streamlit smoke test использовали одни входы и
+`configs/demo_calibrated.yaml`.
+
+Эти числа подтверждают работоспособность управляемой синтетической
+демонстрации, но не превращают пороги в production-гарантии. Итоговая передача
+release candidate находится в [week2_19_20_handoff.md](week2_19_20_handoff.md).

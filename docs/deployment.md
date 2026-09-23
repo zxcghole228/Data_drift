@@ -1,11 +1,79 @@
-# Docker и CI
+# Docker Compose, standalone Docker и CI
 
-Контейнер запускает тот же Streamlit-интерфейс, что и локальная команда. В образ
-копируются только пакет, приложение и YAML-конфигурации: локальные данные,
-результаты, notebook, тесты, Git-история и `.env` исключены через
-`.dockerignore`.
+Один образ используется двумя сервисами: `api` запускает single-worker FastAPI,
+а `dashboard` — Streamlit с офлайн- и online-режимами. В образ копируются только
+пакет, приложение и YAML-конфигурации: локальные данные, результаты, notebook,
+тесты, Git-история и `.env` исключены через `.dockerignore`.
 
-## Сборка и запуск
+## Online stack через Docker Compose
+
+Из корня репозитория:
+
+```bash
+docker compose config
+docker compose up --detach --build
+docker compose ps
+```
+
+Сервисы должны перейти в состояние `healthy`:
+
+- Online API и Swagger UI: `http://localhost:8000` и
+  `http://localhost:8000/docs`;
+- Streamlit: `http://localhost:8501`.
+
+Liveness API доступен сразу, а readiness возвращает `503`, пока не
+зарегистрирован активный Reference:
+
+```bash
+curl --fail http://localhost:8000/health/live
+curl --include http://localhost:8000/health/ready
+curl --fail --request POST \
+  "http://localhost:8000/api/v1/references?format=csv&reference_id=compose-ref&name=ComposeReference&activate=true" \
+  --header "Content-Type: text/csv" \
+  --data-binary @data/generated/none/reference.csv
+curl --fail http://localhost:8000/health/ready
+```
+
+Compose создаёт `online-state` для SQLite/WAL и `online-outputs` для JSONL.
+Оба сервиса монтируют их по одинаковым путям; API является единственным writer,
+dashboard читает сохранённую историю. Проверка непривилегированного запуска:
+
+```bash
+docker compose exec api python -c "import os; print(os.getuid(), os.getgid())"
+docker compose exec dashboard python -c "import os; print(os.getuid(), os.getgid())"
+```
+
+Ожидается `10001 10001` для обоих процессов. Состояние должно сохраняться после
+перезапуска:
+
+```bash
+docker compose restart
+curl --fail http://localhost:8000/api/v1/references/current
+```
+
+Обычная остановка не удаляет volumes:
+
+```bash
+docker compose down
+```
+
+Команда `docker compose down --volumes` удаляет SQLite и JSONL без возможности
+восстановления из Compose, поэтому её следует использовать только для явного
+сброса демонстрационного состояния.
+
+Необязательные настройки копируются из `.env.example` в локальный `.env`:
+
+| Переменная | По умолчанию | Назначение |
+| --- | --- | --- |
+| `DDG_API_PORT` | `8000` | Порт API на host |
+| `DDG_DASHBOARD_PORT` | `8501` | Порт Streamlit на host |
+| `DDG_ALERT_WEBHOOK_URL` | пусто | URL webhook; пустое значение отключает канал |
+
+Внутри Compose зафиксированы `DDG_ONLINE_CONFIG=/app/configs/online.yaml` и
+`DDG_ONLINE_STATE=/app/data/online/monitoring.sqlite3`, чтобы API и dashboard
+гарантированно читали одну конфигурацию и одну базу.
+
+## Standalone Streamlit-контейнер
 
 Из корня репозитория:
 
