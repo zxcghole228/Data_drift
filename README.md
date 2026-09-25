@@ -1,110 +1,116 @@
+<p align="center">
+  <img src="app/assets/data_drift_guardian.png" width="128" alt="Data Drift Guardian">
+</p>
+
 # Data Drift Guardian
 
-Учебный проект системы проверки качества табличных данных и обнаружения сдвигов распределений.
+Data Drift Guardian — прототип системы контроля качества табличных данных и
+обнаружения data drift. Одно статистическое ядро используется в библиотечном
+API, CLI, автономном HTML-отчёте, Streamlit и online micro-batch мониторинге.
 
-## Текущее состояние
+Проект не использует нейросети. Статистические проверки реализованы на
+NumPy/SciPy, а дополнительная Adversarial Validation — на scikit-learn и
+LightGBM.
 
-Реализованы воспроизводимый генератор независимых Reference/Current-выборок,
-загрузка CSV/Parquet, валидация конфигурации и схемы, Data Quality, KS,
-Wasserstein, χ², Cramér's V, PSI, Jensen–Shannon divergence,
-Benjamini–Hochberg и общий `analyze()` pipeline. Контракт 0.2 поддерживает
-персональные distance-пороги признаков и возвращает `effective_config`.
-Adversarial Validation возвращает OOF ROC-AUC по LightGBM, значения фолдов,
-агрегированные важности и опциональный групповой split. Streamlit-интерфейс
-загружает две таблицы и YAML-конфигурацию, показывает статусы, проверки,
-алерты, ML-результат и сопоставимые распределения. Командный интерфейс запускает
-тот же анализ для локальных CSV/Parquet и атомарно сохраняет полный результат
-контракта 0.2 в JSON и необязательный автономный HTML с теми же статусами,
-порогами и интерактивными распределениями. Итоговый текст проекта и скринкаст
-пока остаются незавершёнными требованиями к 27.09.
+**Итоговый отчёт:** [`report/final_report.html`](report/final_report.html) —
+постановка задачи, архитектура, методы, результаты экспериментов, проверка
+online-мониторинга и инструкция по воспроизведению.
 
-Проверенный release candidate — `main` `c33d95b`: локально получены
-`296 passed`, Docker UID 10001 и healthcheck `healthy`/`ok`; Python и Docker
-job на merge commit также зелёные. Калибровка выполнила 540 анализов и сохранена
-в `report/experiments/`. Итоги и ограничения:
-[docs/week2_19_20_handoff.md](docs/week2_19_20_handoff.md).
+## Возможности
 
-Текущий release candidate является offline/batch-анализатором. Online-источник
-батчей, состояние Reference, расписание, история и доставка алертов намеренно
-оставлены для следующего плана; называть текущую версию continuously running
-production-сервисом нельзя.
+- загрузка Reference и Current из CSV/Parquet;
+- строгая проверка колонок и семантических типов;
+- контроль пропусков, дубликатов, Infinity и границ Min/Max;
+- KS-test и Wasserstein-1 для числовых признаков;
+- χ² и Cramér's V для категориальных признаков;
+- PSI и Jensen–Shannon divergence на общем пространстве бинов/категорий;
+- поправка Benjamini–Hochberg на множественные проверки;
+- персональные пороги метрик для отдельных признаков;
+- Adversarial Validation с OOF ROC-AUC и Feature Importance;
+- единый JSON-безопасный `AnalysisResult` версии `0.2`;
+- тёмный Streamlit-дашборд и автономный HTML с Plotly;
+- FastAPI для событий, батчей, Reference и запаздывающего Feedback;
+- tumbling windows, идемпотентность, SQLite-история и доставка алертов;
+- Docker Compose, CI, unit-, integration- и acceptance-тесты.
 
-## Что должно быть в итоговом решении
+## Быстрый старт
 
-- Загрузка CSV/Parquet и проверка схемы.
-- Контроль типов, пропусков, дубликатов и диапазонов.
-- KS-тест, Wasserstein, χ², PSI и Jensen–Shannon Divergence.
-- Adversarial Validation на LightGBM с ROC-AUC на отложенных данных и важностями признаков.
-- Единый интерфейс `analyze(reference, current, config) -> dict`.
-- Streamlit-дашборд, графики распределений и объяснимые алерты.
-- Воспроизводимый генератор демонстрационных данных, notebook и unit-тесты.
-- Итоговый HTML- или PDF-отчёт, Dockerfile, инструкция запуска и скринкаст 2–5 минут.
+Требуется Python `>=3.13,<3.14`.
 
-Описание возможностей и ограничений: [docs/architecture.md](docs/architecture.md).
-
-## Команда и ветки
-
-| Ветка | Назначение | План |
-| --- | --- | --- |
-| `main` | Общая основа и проверенные изменения | [Порядок работы](CONTRIBUTING.md) |
-| `mikhail` | Статистика, Adversarial Validation, эксперименты | [План Михаила](docs/plans/mikhail.md) |
-| `pavel` | Загрузка, качество данных, объединение модулей и интерфейс | [План Павла](docs/plans/pavel.md) |
-
-Оба файла планов входят в общую основу и доступны в каждой ветке. Ответственный за модуль также пишет его тесты и документацию. Изменения общего контракта согласуются вдвоём.
-
-## Структура
-
-| Путь | Содержимое |
-| --- | --- |
-| `src/data_drift_guardian/` | Основной Python-пакет |
-| `src/data_drift_guardian/drift/` | Статистические методы и подготовка распределений |
-| `app/` | Streamlit-приложение |
-| `configs/` | Пример схемы и параметров проверок |
-| `scripts/` | Воспроизводимая генерация данных и калибровочная сетка |
-| `notebooks/` | Демонстрационный notebook |
-| `tests/` | Места для unit- и интеграционных тестов |
-| `docs/` | Архитектура, контракт, планы и заметки об экспериментах |
-| `report/` | Место для итогового отчёта и ссылки на скринкаст |
-| `data/` | Только инструкция; сгенерированные данные не коммитятся |
-
-## Подготовка окружения
-
-Для общей среды команды выбран Python 3.13; пакет ограничивает поддерживаемую ветку диапазоном `>=3.13,<3.14`. Зафиксированный процесс проверки: [docs/environment.md](docs/environment.md).
+Windows Git Bash:
 
 ```bash
-python -m venv .venv
-```
-
-Активация в Linux/macOS:
-
-```bash
-source .venv/bin/activate
-```
-
-Активация в Git Bash на Windows:
-
-```bash
+py -3.13 -m venv .venv
 source .venv/Scripts/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python scripts/check_environment.py
 ```
 
-Активация в Windows PowerShell:
-
-```powershell
-.\.venv\Scripts\Activate.ps1
-```
-
-Установка зависимостей в активированное окружение:
+Linux/macOS:
 
 ```bash
+python3.13 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
+python scripts/check_environment.py
 ```
 
-В `pyproject.toml` заданы допустимые диапазоны, в
-`requirements-runtime.txt` — точные прямые runtime-зависимости, а
-`requirements.txt` добавляет инструменты разработки. Проверка импортов
-выполнена на macOS, Windows и в чистом Linux-окружении с Python 3.13.
+`requirements-runtime.txt` содержит проверенные прямые runtime-зависимости,
+`requirements.txt` дополнительно устанавливает инструменты разработки.
 
-## Запуск
+## Демонстрационные данные
+
+Данные создаются локально с фиксированным seed и не хранятся в Git:
+
+```bash
+python scripts/generate_demo_data.py --scenario none --format both
+python scripts/generate_demo_data.py --scenario combined --format both
+```
+
+Результат появится в `data/generated/none/` и
+`data/generated/combined/`. Доступны сценарии `none`, `numeric`,
+`categorical`, `missingness` и `combined`. Подробности находятся в
+[`data/README.md`](data/README.md).
+
+## Offline-анализ
+
+### CLI
+
+Контроль без намеренного дрейфа:
+
+```bash
+python -m data_drift_guardian \
+  --reference data/generated/none/reference.csv \
+  --current data/generated/none/current.csv \
+  --config configs/demo_calibrated.yaml \
+  --json-output outputs/demo/none.json \
+  --html-output outputs/demo/none.html
+```
+
+Комбинированный сценарий:
+
+```bash
+python -m data_drift_guardian \
+  --reference data/generated/combined/reference.parquet \
+  --current data/generated/combined/current.parquet \
+  --config configs/demo_calibrated.yaml \
+  --json-output outputs/demo/combined.json \
+  --html-output outputs/demo/combined.html \
+  --fail-on-alert
+```
+
+Коды завершения:
+
+| Код | Значение |
+| ---: | --- |
+| `0` | анализ завершён; алертов нет либо `--fail-on-alert` не передан |
+| `1` | ошибка аргументов, входов, конфигурации или записи |
+| `2` | анализ завершён с алертами при `--fail-on-alert` |
+
+Существующие результаты защищены от случайной замены. Для явной перезаписи
+используется `--overwrite`. Полный контракт CLI: [`docs/cli.md`](docs/cli.md).
 
 ### Streamlit
 
@@ -112,169 +118,170 @@ python -m pip install -r requirements.txt
 python -m streamlit run app/streamlit_app.py
 ```
 
-В боковой панели доступны два режима. **Офлайн-анализ** работает с загруженными
-Reference/Current, а **Online-мониторинг** читает сохранённое SQLite-состояние и
-показывает активный Reference, буфер, историю Run, алерты, доставки и оценки по
-запаздывающему Feedback. По умолчанию используются `configs/online.yaml` и
-указанный в нём `online.state_path`; пути можно переопределить переменными
-`DDG_ONLINE_CONFIG` и `DDG_ONLINE_STATE`. Просмотр истории не запускает pipeline
-повторно.
+В режиме **Офлайн-анализ**:
 
-После запуска:
+1. загрузите Reference и Current в CSV или Parquet;
+2. используйте встроенную конфигурацию либо загрузите YAML;
+3. нажмите «Запустить анализ»;
+4. изучите сводку, Data Quality, drift-метрики, ML-результат и распределения;
+5. скачайте полный JSON или автономный HTML.
 
-1. Загрузите Reference и Current в формате CSV или Parquet.
-2. Оставьте встроенную `configs/default.yaml` либо выберите собственный YAML-файл.
-3. При необходимости включите override Adversarial Validation и задайте порог
-   ROC-AUC. Override применяется к копии загруженной конфигурации и отражается в
-   `effective_config` результата.
-4. Нажмите **«Запустить анализ»**. Изменение входного файла, конфигурации или
-   override-настроек помечает сохранённый результат как неактуальный и требует
-   нового запуска.
-5. Просмотрите итоговый статус, длительность, алерты, проверки схемы и качества,
-   drift-метрики, источник порогов, Cramér's V, категориальные диагностики,
-   стратегию ML-split и график выбранного признака.
-6. Фильтруйте готовые таблицы по статусу и признаку без повторного анализа и
-   скачайте тот же результат в JSON или автономном HTML.
+Фильтры интерфейса не запускают pipeline повторно. После изменения входов или
+конфигурации результат помечается как неактуальный.
 
-Статусы `warning`, `critical`, `error` и `skipped` показываются отдельно. Ошибки
-чтения или конфигурации выводятся в интерфейсе и не маскируются успешным
-результатом. Пропуски исключаются из графиков распределений с указанием их
-количества; бесконечности также исключаются из числовых графиков. JSON и HTML
-готовятся один раз после анализа и сохраняются в состоянии сессии, поэтому
-фильтры и кнопки скачивания не запускают статистику повторно.
-
-### Командный интерфейс
-
-Контрольный сценарий без внесённого дрейфа:
-
-```bash
-python -m data_drift_guardian \
-  --reference data/generated/none/reference.csv \
-  --current data/generated/none/current.csv \
-  --config configs/default.yaml \
-  --json-output outputs/html/none.json \
-  --html-output outputs/html/none.html
-```
-
-Сценарий с комбинированным сдвигом и ненулевым кодом при алерте:
-
-```bash
-python -m data_drift_guardian \
-  --reference data/generated/combined/reference.parquet \
-  --current data/generated/combined/current.parquet \
-  --config configs/default.yaml \
-  --json-output outputs/html/combined.json \
-  --html-output outputs/html/combined.html \
-  --fail-on-alert
-```
-
-CLI возвращает `0`, если анализ выполнен; `1` при ошибке запуска; `2`, если
-анализ выполнен с алертами и передан `--fail-on-alert`. Без этого флага
-бизнес-алерт не считается ошибкой программы. Существующий JSON защищён от
-случайной замены; та же политика действует для HTML, а для явной перезаписи
-используется `--overwrite`. HTML включает Plotly JS внутрь файла, открывается
-офлайн без Python-сервера и в проверенных demo-сценариях занимает около 4.8 МБ.
-Полный контракт и политика атомарной записи описаны в
-[docs/cli.md](docs/cli.md).
-
-Основной библиотечный API:
+### Python API
 
 ```python
 from data_drift_guardian import analyze
 from data_drift_guardian.config import load_config
+from data_drift_guardian.ingestion import load_table
 
-config = load_config("configs/default.yaml")
+reference = load_table("data/generated/none/reference.parquet")
+current = load_table("data/generated/none/current.parquet")
+config = load_config("configs/demo_calibrated.yaml")
+
 result = analyze(reference, current, config=config)
+print(result["summary"])
 ```
 
-Pipeline проверяет схему и качество данных, рассчитывает настроенные drift-метрики и возвращает единый JSON-безопасный словарь. Неприменимые к конкретным данным проверки получают `skipped` с причиной. При `config=None` семантические типы признаков выводятся только из Reference.
+Функция не изменяет входные DataFrame. Неприменимые проверки получают
+`skipped` с причиной; значения NaN/Infinity не попадают в итоговый JSON.
 
-### Калибровочные эксперименты
+## Online-мониторинг
 
-Полная воспроизводимая demo-сетка запускается одной командой:
+Online-слой принимает готовые батчи или отдельные события. События сохраняются
+в SQLite и формируют непересекающиеся окна фиксированного размера. Каждое
+готовое окно передаётся в тот же `analyze`, что и offline-режим.
+
+Терминал 1 — API:
 
 ```bash
-python scripts/run_calibration.py
+python -m data_drift_guardian.online \
+  --config configs/online.yaml \
+  --state data/online/monitoring.sqlite3
 ```
 
-Runner выполняет контроль и несколько уровней сдвига на 20 фиксированных seed
-при размерах Current 500, 1 200 и 3 000. Длинная таблица решений, агрегированные
-наблюдаемые доли и metadata с версиями/commit/config сохраняются в
-`report/experiments/`. Методика, ограничения и общий приёмочный сценарий для
-CLI, HTML и Streamlit: [docs/calibration.md](docs/calibration.md).
-
-YAML 0.1 по-прежнему принимается и нормализуется до контракта 0.2. Фактически
-использованная конфигурация доступна в `result["effective_config"]`. Пример
-разных Wasserstein-порогов в единицах каждого признака:
-
-```yaml
-drift:
-  distance_thresholds:
-    wasserstein: null
-    psi: null
-    js: null
-  feature_thresholds:
-    age: {wasserstein: 3.0}
-    income: {wasserstein: 10000.0}
-```
-
-Adversarial Validation по умолчанию отключён, чтобы тяжёлый ML-блок не
-запускался неожиданно. Для запуска укажите в YAML:
-
-```yaml
-adversarial:
-  enabled: true
-  n_splits: 3
-  roc_auc_threshold: 0.70  # исследовательский пример, не универсальная граница
-  exclude_columns: []     # сюда добавить ID и target при их наличии
-  group_column: null      # либо имя entity ID для StratifiedGroupKFold
-```
-
-При заданном `group_column` колонка автоматически исключается из model
-features; пропущенные ID и недостаток групп дают объяснимый `skipped`.
-Описание результата: [docs/contracts.md](docs/contracts.md).
-
-Запуск тестов:
+Терминал 2 — dashboard:
 
 ```bash
-python -m pytest
+DDG_ONLINE_CONFIG="configs/online.yaml" \
+DDG_ONLINE_STATE="data/online/monitoring.sqlite3" \
+python -m streamlit run app/streamlit_app.py
 ```
 
-Unit- и integration-тесты покрывают генератор, загрузку, конфигурацию, схему,
-Data Quality, доступные статистические методы, общий pipeline, CLI, автономный
-HTML, графики и основные сценарии Streamlit-интерфейса. План проверок находится в
-[tests/README.md](tests/README.md).
-
-Демонстрационный notebook запускается из корня проекта:
+Регистрация активного Reference:
 
 ```bash
-python -m jupyter notebook notebooks/demo.ipynb
+curl --fail --request POST \
+  "http://127.0.0.1:8000/api/v1/references?format=csv&reference_id=demo-ref&name=DemoReference&activate=true" \
+  --header "Content-Type: text/csv" \
+  --data-binary @data/generated/none/reference.csv
 ```
 
-Он генерирует и загружает данные, выполняет все четыре сценария, повторяет
-контроль на пяти seed и показывает те же результаты, которые читает дашборд.
-Фактические наблюдения записаны в [docs/experiments.md](docs/experiments.md).
+Проверки состояния:
 
-Online API и Streamlit запускаются одним Compose-проектом:
+```bash
+curl --fail http://127.0.0.1:8000/health/live
+curl --fail http://127.0.0.1:8000/health/ready
+```
+
+- API: `http://127.0.0.1:8000`;
+- Swagger UI: `http://127.0.0.1:8000/docs`;
+- Streamlit: `http://127.0.0.1:8501`.
+
+Система хранит Reference, буфер, Window/Batch Run, полные результаты, алерты,
+доставки и Feedback. Повтор идентичного `event_id` или `batch_id` не запускает
+повторный анализ; конфликтующее содержимое возвращает HTTP `409`.
+
+Полный HTTP-контракт: [`docs/online_monitoring.md`](docs/online_monitoring.md).
+
+## Docker Compose
 
 ```bash
 docker compose up --detach --build
 docker compose ps
 ```
 
-После статуса `healthy` API доступен на `http://localhost:8000`, документация
-OpenAPI — на `/docs`, а интерфейс — на `http://localhost:8501`. Оба процесса
-работают от UID/GID `10001`, используют общий persistent SQLite volume и volume
-для JSONL-алертов. Порты и необязательный webhook настраиваются через `.env` по
-образцу [.env.example](.env.example). Полная инструкция, проверка readiness,
-рестарта и сохранения состояния:
-[docs/deployment.md](docs/deployment.md). Pull request в `main` также запускает
-полные тесты Python 3.13 и Docker build/healthcheck через GitHub Actions.
+После перехода обоих сервисов в `healthy`:
 
-## Данные, результаты и публикация
+- API и Swagger: `http://localhost:8000/docs`;
+- Streamlit: `http://localhost:8501`.
 
-Демонстрационные данные генерируются с фиксированным seed по инструкции [data/README.md](data/README.md). Внешние датасеты указываются ссылками; CSV/Parquet с исходными данными в Git не добавляются. Результаты экспериментов записаны в [docs/experiments.md](docs/experiments.md).
+Compose запускает API и dashboard от UID/GID `10001`, использует общий
+persistent volume для SQLite и отдельный volume для JSONL-алертов. Обычный
+`docker compose down` сохраняет данные. Подробная инструкция:
+[`docs/deployment.md`](docs/deployment.md).
 
-Инструкция по размещению подготовленных веток: [docs/github_setup.md](docs/github_setup.md).
+## Конфигурации
 
-Перечень обязательных итоговых артефактов без планирования следующих недель: [docs/deliverables.md](docs/deliverables.md).
+| Файл | Назначение |
+| --- | --- |
+| `configs/default.yaml` | базовый offline-пример |
+| `configs/demo_calibrated.yaml` | воспроизводимая синтетическая демонстрация |
+| `configs/online.yaml` | анализ и параметры online-слоя |
+
+YAML `0.1` автоматически нормализуется до `0.2`. Фактически применённые
+настройки сохраняются в `result["effective_config"]`. Порог Wasserstein задаётся
+в единицах признака; demo-пороги PSI, JS и ROC-AUC не являются универсальными
+production-границами.
+
+## Тесты и воспроизводимость
+
+```bash
+python -m pytest -q
+```
+
+Финальный локальный прогон после визуальных изменений: `391 passed`. Тесты
+покрывают отдельные методы, общий pipeline, CLI/HTML, Streamlit, Online API,
+SQLite, окна, идемпотентность, Feedback, Docker-файлы и сквозные сценарии.
+
+Демонстрационный notebook:
+
+```bash
+python -m jupyter notebook notebooks/demo.ipynb
+```
+
+Калибровочная сетка:
+
+```bash
+python scripts/run_calibration.py
+```
+
+Она выполняет 540 анализов и сохраняет машинно-читаемые результаты в
+`report/experiments/`. Методика и значения:
+[`docs/experiments.md`](docs/experiments.md).
+
+## Структура репозитория
+
+| Путь | Содержимое |
+| --- | --- |
+| `src/data_drift_guardian/` | статистическое ядро, CLI и online-сервис |
+| `app/` | Streamlit и визуальные ресурсы |
+| `configs/` | YAML-конфигурации |
+| `scripts/` | генератор, калибровка и проверка окружения |
+| `notebooks/` | воспроизводимая демонстрация |
+| `tests/` | unit-, integration- и acceptance-тесты |
+| `docs/` | архитектура, контракты, методы и запуск |
+| `report/final_report.html` | автономный итоговый отчёт с печатью в PDF |
+| `report/experiments/` | результаты калибровки |
+
+## Документация
+
+| Документ | Содержание |
+| --- | --- |
+| [`architecture.md`](docs/architecture.md) | компоненты, поток данных и границы |
+| [`contracts.md`](docs/contracts.md) | входы, результат, статусы и пороги |
+| [`methods.md`](docs/methods.md) | статистика, Data Quality и ML-метод |
+| [`experiments.md`](docs/experiments.md) | сценарии, калибровка и результаты |
+| [`online_monitoring.md`](docs/online_monitoring.md) | Online API, окна и Feedback |
+| [`cli.md`](docs/cli.md) | аргументы, exit codes и экспорт |
+| [`deployment.md`](docs/deployment.md) | Python, Docker Compose и CI |
+
+## Ограничения
+
+- синтетические пороги требуют повторной калибровки на реальных данных;
+- SQLite-конфигурация рассчитана на один API worker;
+- автоматическое переобучение и автоматическая замена Reference не выполняются;
+- учебный API не реализует TLS, аутентификацию и rate limiting;
+- изменение входных распределений не является причинным доказательством
+  concept drift или необходимости переобучения.
