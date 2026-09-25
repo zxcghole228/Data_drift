@@ -1,57 +1,80 @@
-# План проверок
+# Тестирование
 
-Реализованы unit-тесты отдельных модулей,
-[интеграционные тесты общего pipeline](integration/test_pipeline.py),
-[проверки CLI](integration/test_cli.py) и
-[проверки Streamlit-интерфейса](integration/test_streamlit_app.py), включая
-[online-историю](integration/test_online_dashboard.py), и
-[online acceptance](acceptance/test_online_acceptance.py). Каждый
-участник добавляет содержательные проверки одновременно со своим модулем.
+Тесты разделены по уровню ответственности:
 
-| Область | Что проверять | Автор |
-| --- | --- | --- |
-| Генератор данных | Seed, независимость батчей, сценарии сдвига, диапазоны, CSV/Parquet | Михаил |
-| Загрузка | CSV/Parquet через временные файлы, неизвестный формат, отсутствующий файл | Павел |
-| Схема | Колонки, типы, повтор имён, пустой набор | Павел |
-| Качество | Доли пропусков, изменение в п.п., дубликаты, граничные min/max | Павел |
-| Числовые методы | Известные простые примеры, сдвиг, константы, NaN, разные размеры | Михаил |
-| Индексы | Нулевой сдвиг, пустые частоты, новая категория, общие бины, хвосты | Михаил |
-| χ² | Таблица частот, редкие/новые категории, причины неприменимости | Михаил |
-| Adversarial | Разбиение, отсутствие утечки, фиксированный seed, малые выборки | Михаил |
-| Pipeline | JSON без NaN/Infinity, неизменность входов, видимость пропущенных проверок | Павел, проверка вдвоём |
-| CLI | CSV/Parquet, JSON/HTML, один запуск анализа, exit codes, overwrite, debug, атомарность записи | Павел |
-| Графики | Общие бины, доли категорий, пропуски, бесконечности, неизменность входов | Павел |
-| HTML-отчёт | Основные разделы, Unicode, экранирование, автономный Plotly, режим без DataFrame | Павел |
-| Streamlit | Явный запуск, ошибка файла, stale state, config override, JSON/HTML-download, фильтры без повторного анализа и совпадение effective_config | Павел |
-| End-to-end | CSV/Parquet → схема/качество → статистика/ML → JSON/HTML | Михаил и Павел |
-| Notebook | Последовательное выполнение всех кодовых ячеек и четыре сценария | Михаил и Павел |
-| Калибровка | Сетка случаев, воспроизводимость, диагностики, типы наблюдаемых долей, атомарная запись CSV/JSON | Михаил |
-| Deployment | Docker non-root/healthcheck, runtime-зависимости, `.dockerignore` и обязательные шаги CI | Павел |
-| Online acceptance | Рестарт окна, none/combined, идемпотентность, отказ webhook и сохранение Run | Павел |
+| Каталог | Назначение |
+| --- | --- |
+| `unit/` | формулы, конфигурация, схема, Data Quality, хранилище и форматирование |
+| `integration/` | pipeline, CLI/HTML, Streamlit, FastAPI, notebook и deployment-файлы |
+| `acceptance/` | сквозной публичный контракт online-мониторинга |
 
-`unit/` предназначен для отдельных модулей, `integration/` — для общего API и
-интерфейсов, `acceptance/` — для сквозного публичного online-контракта.
+## Полный прогон
 
-Быстрый online smoke:
+Из корня репозитория в активированном окружении:
 
 ```bash
-python -m pytest -q -m online_smoke tests/acceptance
+python -m pytest -q
 ```
 
-Полная online-приёмка:
+Используйте именно `python -m pytest`: так корень проекта гарантированно
+попадает в путь импорта на Windows. Финальный локальный прогон после
+визуальных изменений: `391 passed`.
+
+## Выборочные проверки
+
+```bash
+# Статистическое и ML-ядро
+python -m pytest -q \
+  tests/unit/test_numeric_drift.py \
+  tests/unit/test_categorical_drift.py \
+  tests/unit/test_stability.py \
+  tests/unit/test_adversarial.py
+
+# Offline pipeline, CLI, HTML и Streamlit
+python -m pytest -q \
+  tests/integration/test_pipeline.py \
+  tests/integration/test_cli.py \
+  tests/unit/test_reporting.py \
+  tests/integration/test_streamlit_app.py
+
+# Online API, monitor и dashboard
+python -m pytest -q \
+  tests/integration/test_online_api.py \
+  tests/integration/test_online_monitor.py \
+  tests/integration/test_online_dashboard.py
+```
+
+## Online acceptance
+
+Полная сквозная проверка:
 
 ```bash
 python -m pytest -q tests/acceptance/test_online_acceptance.py
 ```
 
-Запускать `python -m pytest` из корня репозитория. Для статистических свойств не требовать, чтобы любая независимая выборка без дрейфа всегда давала p-value > 0.05; отделять детерминированные проверки формул от экспериментов с ложными тревогами.
+Быстрый persistence-smoke, также используемый CI:
 
-Контрольный прогон 22.09.2026 на Windows 11 и Python 3.13.7: `285 passed`
-за 36.24 секунды. Ручной smoke test Streamlit подтвердил config override,
-отображение effective configuration и диагностик, фильтрацию без повторного
-анализа, stale state и скачивание JSON/HTML. CLI по-прежнему создаёт автономные
-отчёты для сценариев `none` и `combined`.
+```bash
+python -m pytest -q -m online_smoke tests/acceptance
+```
 
-Контрольный прогон 22.09.2026 на Windows 11 и Python 3.13.7 после deployment
-patch: `296 passed` за 105.00 секунды. Локальные Docker build, запуск от UID
-10001, healthcheck `healthy`/`ok` и ручной Streamlit smoke test прошли успешно.
+Acceptance-сценарии используют временную SQLite-базу и подтверждают:
+
+- регистрацию и восстановление Reference;
+- сохранение неполного окна после рестарта;
+- отсутствие ожидаемых алертов в контрольном сценарии;
+- обнаружение комбинированного сдвига;
+- идемпотентность событий и батчей;
+- сохранение Run при ошибке webhook;
+- пересчёт качества после запаздывающего Feedback.
+
+## Принципы тестов
+
+- временные файлы и базы создаются через `tmp_path`;
+- входные DataFrame не должны изменяться;
+- JSON проверяется с `allow_nan=False`;
+- `skipped` проверяется вместе с причиной;
+- детерминированные формулы отделяются от статистических экспериментов;
+- независимый контроль без внесённого дрейфа не обязан для каждого seed давать
+  все p-value выше `0.05`;
+- тесты не записывают сгенерированные CSV/Parquet в репозиторий.

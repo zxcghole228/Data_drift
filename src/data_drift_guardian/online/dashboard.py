@@ -16,12 +16,44 @@ from .storage import MonitoringStore
 ONLINE_CONFIG_ENV = "DDG_ONLINE_CONFIG"
 ONLINE_STATE_ENV = "DDG_ONLINE_STATE"
 
+ANALYSIS_STATUS_VIEW = {
+    "ok": "✅ Успешно",
+    "warning": "⚠️ Предупреждение",
+    "critical": "🚨 Критическая проблема",
+    "skipped": "⏭️ Проверка пропущена",
+    "error": "❌ Ошибка",
+}
+RUN_STATUS_VIEW = {
+    "running": "⏳ Выполняется",
+    "completed": "✅ Завершён",
+    "failed": "❌ Ошибка",
+}
+ALERT_STATUS_VIEW = {
+    "ok": "✅ Успешно",
+    "warning": "⚠️ Предупреждение",
+    "critical": "🚨 Критическая проблема",
+    "error": "❌ Ошибка",
+}
+DELIVERY_STATUS_VIEW = {
+    "pending": "⏳ Ожидает доставки",
+    "succeeded": "✅ Успешно",
+    "failed": "❌ Ошибка",
+}
+PERFORMANCE_STATUS_VIEW = {
+    "evaluated": "✅ Оценено",
+    "not_evaluated": "⏭️ Не оценено",
+}
+
 
 def _summary(run: RunRecord) -> dict[str, Any]:
     if not isinstance(run.analysis_result, dict):
         return {}
     summary = run.analysis_result.get("summary")
     return summary if isinstance(summary, dict) else {}
+
+
+def _value_or_dash(value: object) -> object:
+    return "—" if value is None else value
 
 
 def _table_height(row_count: int, *, maximum_rows: int = 10) -> int:
@@ -31,13 +63,56 @@ def _table_height(row_count: int, *, maximum_rows: int = 10) -> int:
     return 39 + visible_rows * 35
 
 
-def _show_table(rows: list[dict[str, object]]) -> None:
+def _show_table(
+    rows: list[dict[str, object]],
+    *,
+    column_widths: dict[str, str] | None = None,
+) -> None:
+    column_config = {
+        column: st.column_config.Column(width=width)
+        for column, width in (column_widths or {}).items()
+    }
     st.dataframe(
         pd.DataFrame(rows),
         hide_index=True,
         width="stretch",
         height=_table_height(len(rows)),
+        column_config=column_config,
     )
+
+
+def _compact_identifier(value: object) -> str:
+    text = str(value)
+    if len(text) <= 22:
+        return text
+    return f"{text[:13]}…{text[-6:]}"
+
+
+def _project_rows(
+    rows: list[dict[str, object]],
+    columns: dict[str, str],
+    value_maps: dict[str, dict[str, str]] | None = None,
+) -> list[dict[str, object]]:
+    projected: list[dict[str, object]] = []
+    for row in rows:
+        visible: dict[str, object] = {}
+        for label, source in columns.items():
+            value = row.get(source, "—")
+            value_map = (value_maps or {}).get(source)
+            if value_map is not None:
+                value = value_map.get(str(value), value)
+            if label == "Run":
+                value = _compact_identifier(value)
+            visible[label] = value
+        projected.append(visible)
+    return projected
+
+
+def _detail_label(row: dict[str, object], index: int) -> str:
+    identifier = row.get("Run") or row.get("Delivery") or f"Запись {index + 1}"
+    check = row.get("Проверка")
+    suffix = f" · {check}" if check not in (None, "", "—") else ""
+    return f"{_compact_identifier(identifier)}{suffix}"
 
 
 def collect_dashboard_snapshot(
@@ -148,10 +223,10 @@ def collect_dashboard_snapshot(
                     "Run": run.run_id,
                     "Статус": performance.status,
                     "Feedback rows": result.get("feedback_rows", "—"),
-                    "Accuracy": accuracy.get("value", "—"),
-                    "Accuracy alert": accuracy.get("alert", "—"),
-                    "ROC-AUC": roc_auc.get("value", "—"),
-                    "ROC-AUC alert": roc_auc.get("alert", "—"),
+                    "Accuracy": _value_or_dash(accuracy.get("value")),
+                    "Accuracy alert": _value_or_dash(accuracy.get("alert")),
+                    "ROC-AUC": _value_or_dash(roc_auc.get("value")),
+                    "ROC-AUC alert": _value_or_dash(roc_auc.get("alert")),
                     "Причина": result.get("reason") or "—",
                     "Обновлён": performance.updated_at,
                 }
@@ -207,10 +282,28 @@ def _render_section(
     rows: list[dict[str, object]],
     *,
     empty_message: str,
+    columns: dict[str, str],
+    column_widths: dict[str, str],
+    details_key: str,
+    value_maps: dict[str, dict[str, str]] | None = None,
+    notice: str | None = None,
 ) -> None:
     st.subheader(title)
+    if notice is not None:
+        st.info(notice)
     if rows:
-        _show_table(rows)
+        _show_table(
+            _project_rows(rows, columns, value_maps),
+            column_widths=column_widths,
+        )
+        with st.expander("Технические детали", expanded=False):
+            selected_index = st.selectbox(
+                "Запись",
+                options=range(len(rows)),
+                format_func=lambda index: _detail_label(rows[index], index),
+                key=details_key,
+            )
+            st.json(rows[selected_index])
     else:
         st.info(empty_message)
 
@@ -218,11 +311,7 @@ def _render_section(
 def render_online_dashboard(default_config_path: str | Path) -> None:
     """Показать online-историю без повторного запуска анализа."""
 
-    st.title("🛡️ Data Drift Guardian · Online")
-    st.write(
-        "Read-only панель persistent-состояния: Reference, буфер, Run, алерты, "
-        "доставка и запаздывающий Feedback."
-    )
+    st.write("Онлайн-мониторинг данных.")
 
     configured_path = os.environ.get(ONLINE_CONFIG_ENV, str(default_config_path))
     with st.sidebar:
@@ -285,15 +374,19 @@ def render_online_dashboard(default_config_path: str | Path) -> None:
         )
         return
 
+    readiness_label = (
+        "Готово" if snapshot["readiness"] == "ready" else "Не готово"
+    )
     first, second, third, fourth = st.columns(4)
-    first.metric("Readiness", snapshot["readiness"])
+    first.metric("Готовность данных", readiness_label)
     second.metric("Буфер", snapshot["buffered_rows"])
     third.metric("Размер окна", snapshot["window_size"])
     fourth.metric("Run в снимке", len(snapshot["runs"]))
     st.caption(
-        f"SQLite schema v{snapshot['schema_version']} · `{snapshot['state_path']}` · "
-        f"claimed rows: {snapshot['claimed_rows']}. Readiness здесь отражает "
-        "доступность состояния и Reference, а не liveness процесса API."
+        f"Схема SQLite v{snapshot['schema_version']} · `{snapshot['state_path']}` · "
+        f"закреплённых строк: {snapshot['claimed_rows']}. Готовность данных означает, "
+        "что SQLite доступна и активный Reference выбран; состояние процесса "
+        "API проверяется через /health/live и /health/ready."
     )
 
     _render_reference(snapshot)
@@ -301,22 +394,110 @@ def render_online_dashboard(default_config_path: str | Path) -> None:
         "История Run",
         snapshot["runs"],
         empty_message="Run ещё не создавались.",
+        columns={
+            "Создан": "Создан",
+            "Источник": "Источник",
+            "Строк": "Строк",
+            "Статус запуска": "Run status",
+            "Статус анализа": "Analysis status",
+            "Алертов": "Алертов",
+        },
+        column_widths={
+            "Создан": "medium",
+            "Источник": "small",
+            "Строк": "small",
+            "Статус запуска": "medium",
+            "Статус анализа": "medium",
+            "Алертов": "small",
+        },
+        details_key="online_run_details",
+        value_maps={
+            "Run status": RUN_STATUS_VIEW,
+            "Analysis status": ANALYSIS_STATUS_VIEW,
+        },
     )
     _render_section(
         "Алерты",
         snapshot["alerts"],
         empty_message="В сохранённых Run алертов нет.",
+        columns={
+            "Run": "Run",
+            "Источник": "Источник",
+            "Проверка": "Проверка",
+            "Признак": "Признак",
+            "Статус": "Severity",
+            "Сообщение": "Сообщение",
+        },
+        column_widths={
+            "Run": "medium",
+            "Источник": "small",
+            "Проверка": "medium",
+            "Признак": "small",
+            "Статус": "medium",
+            "Сообщение": "large",
+        },
+        details_key="online_alert_details",
+        value_maps={"Severity": ALERT_STATUS_VIEW},
     )
     _render_section(
         "Доставка алертов",
         snapshot["deliveries"],
         empty_message="Попытки доставки ещё не создавались.",
+        columns={
+            "Run": "Run",
+            "Канал": "Канал",
+            "Статус": "Статус",
+            "Попыток": "Попыток",
+            "Обновлён": "Обновлён",
+        },
+        column_widths={
+            "Run": "medium",
+            "Канал": "small",
+            "Статус": "medium",
+            "Попыток": "small",
+            "Обновлён": "medium",
+        },
+        details_key="online_delivery_details",
+        value_maps={"Статус": DELIVERY_STATUS_VIEW},
     )
-    _render_section(
-        "Performance / delayed Feedback",
-        snapshot["performance"],
-        empty_message="Оценок качества по Feedback пока нет.",
-    )
+    performance_config = config["online"]["performance"]
+    if not performance_config["enabled"]:
+        st.subheader("Качество модели по обратной связи")
+        st.info("Проверка качества модели отключена в конфигурации.")
+    else:
+        has_pending_feedback = any(
+            row.get("Статус") == "not_evaluated"
+            for row in snapshot["performance"]
+        )
+        notice = None
+        if has_pending_feedback:
+            notice = (
+                "Для расчёта Accuracy и ROC-AUC требуется не менее "
+                f"{performance_config['min_feedback_rows']} строк Feedback "
+                "с фактическими ответами."
+            )
+        _render_section(
+            "Качество модели по обратной связи",
+            snapshot["performance"],
+            empty_message="Оценок качества по Feedback пока нет.",
+            columns={
+                "Run": "Run",
+                "Статус": "Статус",
+                "Feedback": "Feedback rows",
+                "Accuracy": "Accuracy",
+                "ROC-AUC": "ROC-AUC",
+            },
+            column_widths={
+                "Run": "medium",
+                "Статус": "medium",
+                "Feedback": "small",
+                "Accuracy": "small",
+                "ROC-AUC": "small",
+            },
+            details_key="online_performance_details",
+            value_maps={"Статус": PERFORMANCE_STATUS_VIEW},
+            notice=notice,
+        )
 
     if snapshot["run_records"]:
         with st.expander("Полный AnalysisResult выбранного Run", expanded=False):

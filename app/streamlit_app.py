@@ -20,6 +20,7 @@ from data_drift_guardian.online.dashboard import render_online_dashboard
 from data_drift_guardian.reporting import distribution_figure, export_html
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+APP_ICON_PATH = PROJECT_ROOT / "app" / "assets" / "data_drift_guardian.png"
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "configs" / "default.yaml"
 DEFAULT_ONLINE_CONFIG_PATH = PROJECT_ROOT / "configs" / "online.yaml"
 APP_MODE_KEY = "application_mode"
@@ -96,7 +97,7 @@ def mark_analysis_stale() -> None:
 
 def _status_text(status: Status) -> str:
     icon, label = STATUS_VIEW[status]
-    return f"{icon} {label} (`{status}`)"
+    return f"{icon} {label}"
 
 
 def _show_status(status: Status, *, prefix: str = "Итоговый статус") -> None:
@@ -121,20 +122,8 @@ def _format_value(value: object) -> str:
     return str(value)
 
 
-def _category_diagnostics(details: dict[str, Any]) -> str:
-    keys = (
-        "new_category_count",
-        "disappeared_category_count",
-        "pooled_category_count",
-    )
-    if not any(key in details for key in keys):
-        return "—"
-    return " / ".join(_format_value(details.get(key)) for key in keys)
-
-
 def _check_row(
     *,
-    source: str,
     feature: str | None,
     check: dict[str, Any],
 ) -> dict[str, object]:
@@ -145,31 +134,27 @@ def _check_row(
     return {
         "_status": status,
         "_feature": feature,
-        "Источник": source,
-        "Признак": feature or "—",
+        "_reason": check["reason"],
+        "_p_value": check["p_value"],
+        "_adjusted_p_value": check["adjusted_p_value"],
+        "_details": details,
+        "Признак": feature or "Вся таблица",
         "Проверка": str(check["name"]),
         "Статус": _status_text(status),
         "Значение": _format_value(check["value"]),
         "Порог": _format_value(check["threshold"]),
-        "p-value": _format_value(check["p_value"]),
-        "Скорр. p-value": _format_value(check["adjusted_p_value"]),
-        "Алерт": _format_value(check["alert"]),
-        "Причина": str(check["reason"] or "—"),
         "Источник порога": str(details.get("threshold_source", "—")),
-        "Cramér's V": _format_value(details.get("cramers_v")),
-        "Категории: новые / исчезнувшие / pooled": _category_diagnostics(details),
-        "Доля pooled": _format_value(details.get("pooled_observation_fraction")),
     }
 
 
 def _quality_rows(result: AnalysisResult) -> list[dict[str, object]]:
     rows = [
-        _check_row(source="quality", feature=None, check=check)
+        _check_row(feature=None, check=check)
         for check in result["quality"]["dataset_checks"]
     ]
     for feature, checks in result["quality"]["feature_checks"].items():
         rows.extend(
-            _check_row(source="quality", feature=feature, check=check)
+            _check_row(feature=feature, check=check)
             for check in checks
         )
     return rows
@@ -179,7 +164,7 @@ def _drift_rows(result: AnalysisResult) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for feature, feature_result in result["drift"]["features"].items():
         rows.extend(
-            _check_row(source="drift", feature=feature, check=check)
+            _check_row(feature=feature, check=check)
             for check in feature_result["checks"].values()
         )
     return rows
@@ -195,10 +180,22 @@ def _feature_rows(result: AnalysisResult) -> list[dict[str, object]]:
             "Статус": _status_text(feature_result["status"]),
             "Reference valid": feature_result["n_reference_valid"],
             "Current valid": feature_result["n_current_valid"],
-            "Алерт": _format_value(feature_result["alert"]),
             "Причина": feature_result["reason"] or "—",
         }
         for feature, feature_result in result["drift"]["features"].items()
+    ]
+
+
+def _matching_rows(
+    rows: list[dict[str, object]],
+    statuses: set[Status],
+    feature: str | None,
+) -> list[dict[str, object]]:
+    return [
+        row
+        for row in rows
+        if row["_status"] in statuses
+        and (feature is None or row["_feature"] == feature)
     ]
 
 
@@ -207,15 +204,10 @@ def _visible_rows(
     statuses: set[Status],
     feature: str | None,
 ) -> list[dict[str, object]]:
-    visible: list[dict[str, object]] = []
-    for row in rows:
-        if row["_status"] not in statuses:
-            continue
-        if feature is not None and row["_feature"] != feature:
-            continue
-        visible.append(
-            {key: value for key, value in row.items() if not key.startswith("_")}
-        )
+    visible = [
+        {key: value for key, value in row.items() if not key.startswith("_")}
+        for row in _matching_rows(rows, statuses, feature)
+    ]
     if not visible:
         return visible
 
@@ -243,6 +235,85 @@ def _show_dataframe(frame: pd.DataFrame) -> None:
         width="stretch",
         height=_table_height(len(frame)),
     )
+
+
+def _render_check_details(
+    rows: list[dict[str, object]],
+    statuses: set[Status],
+    feature_filter: str | None,
+    *,
+    show_statistical_significance: bool,
+    show_category_diagnostics: bool,
+) -> None:
+    matching = _matching_rows(rows, statuses, feature_filter)
+
+    reason_rows = [
+        {
+            "Признак": row["Признак"],
+            "Проверка": row["Проверка"],
+            "Статус": row["Статус"],
+            "Пояснение": row["_reason"],
+        }
+        for row in matching
+        if row["_reason"] not in (None, "")
+    ]
+    if reason_rows:
+        with st.expander(f"Пояснения к проверкам ({len(reason_rows)})"):
+            _show_dataframe(pd.DataFrame(reason_rows))
+
+    if show_statistical_significance:
+        significance_rows = [
+            {
+                "Признак": row["Признак"],
+                "Проверка": row["Проверка"],
+                "p-value": _format_value(row["_p_value"]),
+                "Скорр. p-value": _format_value(row["_adjusted_p_value"]),
+                "Статус": row["Статус"],
+            }
+            for row in matching
+            if row["_p_value"] is not None
+            or row["_adjusted_p_value"] is not None
+        ]
+        if significance_rows:
+            with st.expander(
+                f"Статистическая значимость ({len(significance_rows)})"
+            ):
+                _show_dataframe(pd.DataFrame(significance_rows))
+
+    if not show_category_diagnostics:
+        return
+
+    category_rows: list[dict[str, object]] = []
+    diagnostic_keys = {
+        "cramers_v",
+        "new_category_count",
+        "disappeared_category_count",
+        "pooled_category_count",
+        "pooled_observation_fraction",
+    }
+    for row in matching:
+        details = cast(dict[str, Any], row["_details"])
+        if not diagnostic_keys.intersection(details):
+            continue
+        pooled_fraction = details.get("pooled_observation_fraction")
+        if isinstance(pooled_fraction, dict):
+            pooled_fraction = pooled_fraction.get("combined")
+        category_rows.append(
+            {
+                "Признак": row["Признак"],
+                "Проверка": row["Проверка"],
+                "Cramér's V": _format_value(details.get("cramers_v")),
+                "Новых": _format_value(details.get("new_category_count")),
+                "Исчезнувших": _format_value(
+                    details.get("disappeared_category_count")
+                ),
+                "Pooled": _format_value(details.get("pooled_category_count")),
+                "Доля pooled": _format_value(pooled_fraction),
+            }
+        )
+    if category_rows:
+        with st.expander(f"Категориальная диагностика ({len(category_rows)})"):
+            _show_dataframe(pd.DataFrame(category_rows))
 
 
 def _render_filters(result: AnalysisResult) -> tuple[set[Status], str | None]:
@@ -313,9 +384,17 @@ def _render_quality(
     _show_status(result["quality"]["status"], prefix="Качество данных")
     if result["quality"]["reason"]:
         st.write(result["quality"]["reason"])
-    rows = _visible_rows(_quality_rows(result), statuses, feature_filter)
+    all_rows = _quality_rows(result)
+    rows = _visible_rows(all_rows, statuses, feature_filter)
     if rows:
         _show_dataframe(pd.DataFrame(rows))
+        _render_check_details(
+            all_rows,
+            statuses,
+            feature_filter,
+            show_statistical_significance=False,
+            show_category_diagnostics=False,
+        )
     else:
         st.info("Нет проверок качества, соответствующих выбранным фильтрам.")
 
@@ -335,10 +414,18 @@ def _render_drift(
         st.markdown("#### Сводка по признакам")
         _show_dataframe(pd.DataFrame(feature_rows))
 
-    check_rows = _visible_rows(_drift_rows(result), statuses, feature_filter)
+    all_check_rows = _drift_rows(result)
+    check_rows = _visible_rows(all_check_rows, statuses, feature_filter)
     if check_rows:
         st.markdown("#### Метрики")
         _show_dataframe(pd.DataFrame(check_rows))
+        _render_check_details(
+            all_check_rows,
+            statuses,
+            feature_filter,
+            show_statistical_significance=True,
+            show_category_diagnostics=True,
+        )
     elif not feature_rows:
         st.info("Нет drift-метрик, соответствующих выбранным фильтрам.")
 
@@ -581,20 +668,39 @@ def _run_analysis(
     }
 
 
+def _render_app_header(title: str) -> None:
+    """Показать общий заголовок приложения с фирменной иконкой."""
+
+    logo_column, title_column = st.columns(
+        [1, 15],
+        gap=None,
+        vertical_alignment="center",
+    )
+    with logo_column:
+        st.image(str(APP_ICON_PATH), width="stretch")
+    with title_column:
+        st.title(title)
+
+
 def main() -> None:
-    st.set_page_config(page_title="Data Drift Guardian", page_icon="🛡️", layout="wide")
+    st.set_page_config(
+        page_title="Data Drift Guardian",
+        page_icon=str(APP_ICON_PATH),
+        layout="wide",
+    )
     with st.sidebar:
         application_mode = st.radio(
             "Режим",
-            ["Офлайн-анализ", "Online-мониторинг"],
+            ["Офлайн-анализ", "Онлайн-мониторинг"],
             key=APP_MODE_KEY,
         )
 
-    if application_mode == "Online-мониторинг":
+    if application_mode == "Онлайн-мониторинг":
+        _render_app_header("Data Drift Guardian · Онлайн")
         render_online_dashboard(DEFAULT_ONLINE_CONFIG_PATH)
         return
 
-    st.title("🛡️ Data Drift Guardian")
+    _render_app_header("Data Drift Guardian")
     st.write(
         "Сравните эталонную и текущую таблицы, проверьте качество данных "
         "и доступные метрики дрейфа."
