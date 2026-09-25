@@ -62,6 +62,7 @@ def test_app_runs_real_pipeline_and_keeps_result_across_reruns() -> None:
     assert app.metric[1].value == "6"
     assert app.metric[2].value == "3"
     assert any("Итоговый статус" in message.value for message in app.success)
+    assert all("(`ok`)" not in message.value for message in app.success)
     assert len(app.dataframe) >= 3
     assert len(app.get("plotly_chart")) == 1
     assert len(app.get("download_button")) == 2
@@ -72,6 +73,15 @@ def test_app_runs_real_pipeline_and_keeps_result_across_reruns() -> None:
         "Источник порога" in dataframe.value.columns
         for dataframe in app.dataframe
     )
+    assert all("Алерт" not in dataframe.value.columns for dataframe in app.dataframe)
+    status_values = [
+        str(value)
+        for dataframe in app.dataframe
+        if "Статус" in dataframe.value.columns
+        for value in dataframe.value["Статус"].tolist()
+    ]
+    assert all("(`ok`)" not in value for value in status_values)
+    assert all("(`warning`)" not in value for value in status_values)
 
     payload = app.session_state["analysis_payload"]
     downloaded_result = json.loads(payload["json_content"].decode("utf-8"))
