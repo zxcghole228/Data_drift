@@ -187,6 +187,32 @@ def test_export_html_creates_self_contained_report_with_all_sections(
     assert "contract_version" in content
 
 
+def test_html_report_uses_dark_compact_scrollable_layout(
+    tmp_path: Path,
+    report_payload: tuple[AnalysisResult, pd.DataFrame, pd.DataFrame],
+) -> None:
+    result, reference, current = report_payload
+    output_path = tmp_path / "dark-report.html"
+
+    export_html(
+        result,
+        output_path,
+        reference=reference,
+        current=current,
+    )
+
+    content = output_path.read_text(encoding="utf-8")
+    assert "color-scheme: dark" in content
+    assert 'class="table-scroll"' in content
+    assert "Таблица прокручивается по горизонтали" in content
+    assert "position: sticky" in content
+    assert "<th>Детали</th>" not in content
+    assert "<th>Алерт</th>" not in content
+    assert 'paper_bgcolor":"#111827"' in content
+    assert content.index('id="distributions"') < content.index('id="config"')
+    assert '<details class="panel disclosure">' in content
+
+
 def test_export_html_without_frames_is_complete_and_explains_missing_plots(
     tmp_path: Path,
     report_payload: tuple[AnalysisResult, pd.DataFrame, pd.DataFrame],

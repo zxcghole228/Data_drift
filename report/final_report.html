@@ -1,0 +1,562 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Data Drift Guardian — итоговый отчёт</title>
+  <style>
+    :root {
+      --bg: #080d16;
+      --surface: #101827;
+      --surface-2: #162235;
+      --line: #293a52;
+      --text: #edf5ff;
+      --muted: #9eb0c7;
+      --cyan: #40e0e8;
+      --blue: #408cff;
+      --orange: #ff7a21;
+      --green: #45d483;
+      --yellow: #ffc857;
+      --red: #ff5f6d;
+      --radius: 16px;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 12% 0%, rgba(64, 224, 232, 0.12), transparent 28rem),
+        radial-gradient(circle at 92% 8%, rgba(64, 140, 255, 0.12), transparent 30rem),
+        var(--bg);
+      color: var(--text);
+      font: 16px/1.65 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+        "Segoe UI", sans-serif;
+    }
+
+    a { color: var(--cyan); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code {
+      padding: 0.12rem 0.34rem;
+      border: 1px solid rgba(64, 224, 232, 0.16);
+      border-radius: 6px;
+      background: #09111e;
+      color: #c9fbff;
+      font-size: 0.92em;
+    }
+    pre {
+      margin: 1rem 0 0;
+      padding: 1rem 1.15rem;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #070c14;
+      color: #d7faff;
+    }
+    pre code { padding: 0; border: 0; background: transparent; }
+
+    .page {
+      width: min(1180px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 28px 0 72px;
+    }
+
+    .hero {
+      position: relative;
+      overflow: hidden;
+      padding: 46px;
+      border: 1px solid rgba(64, 224, 232, 0.3);
+      border-radius: 24px;
+      background: linear-gradient(135deg, rgba(16, 24, 39, 0.98), rgba(10, 18, 31, 0.92));
+      box-shadow: 0 26px 90px rgba(0, 0, 0, 0.36);
+    }
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -90px;
+      top: -120px;
+      width: 360px;
+      height: 360px;
+      border-radius: 50%;
+      border: 2px solid rgba(64, 224, 232, 0.18);
+      box-shadow:
+        0 0 0 58px rgba(64, 140, 255, 0.07),
+        0 0 0 118px rgba(64, 224, 232, 0.035);
+    }
+    .eyebrow {
+      margin: 0 0 10px;
+      color: var(--cyan);
+      font-size: 0.82rem;
+      font-weight: 800;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+    h1 {
+      max-width: 850px;
+      margin: 0;
+      font-size: clamp(2.3rem, 6vw, 4.7rem);
+      line-height: 1.04;
+      letter-spacing: -0.045em;
+    }
+    .lead {
+      max-width: 820px;
+      margin: 22px 0 0;
+      color: #c3d2e6;
+      font-size: 1.16rem;
+    }
+    .hero-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 28px;
+    }
+    .chip {
+      padding: 7px 11px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(9, 17, 30, 0.72);
+      color: #c9d8eb;
+      font-size: 0.88rem;
+    }
+
+    .toc {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 10px;
+      margin: 22px 0 0;
+    }
+    .toc a {
+      display: block;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(16, 24, 39, 0.78);
+      color: var(--text);
+    }
+    .toc a:hover { border-color: var(--cyan); text-decoration: none; }
+
+    section {
+      margin-top: 26px;
+      padding: 30px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(16, 24, 39, 0.92);
+    }
+    h2 {
+      margin: 0 0 18px;
+      font-size: 1.75rem;
+      line-height: 1.2;
+      letter-spacing: -0.025em;
+    }
+    h3 { margin: 26px 0 10px; color: #d9f9ff; }
+    p { margin: 10px 0; }
+    .muted { color: var(--muted); }
+    .accent { color: var(--cyan); }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 14px;
+    }
+    .card {
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: var(--surface-2);
+    }
+    .card h3 { margin: 0 0 6px; font-size: 1rem; }
+    .card p { margin: 0; color: var(--muted); }
+    .metric-value {
+      margin: 4px 0 2px;
+      color: var(--cyan);
+      font-size: 2rem;
+      font-weight: 800;
+      line-height: 1.1;
+    }
+    .metric-label { color: var(--muted); font-size: 0.88rem; }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(150px, 1fr));
+      gap: 12px;
+      margin-top: 18px;
+    }
+    .flow-item {
+      position: relative;
+      padding: 16px;
+      border: 1px solid rgba(64, 224, 232, 0.26);
+      border-radius: 12px;
+      background: #0a1422;
+    }
+    .flow-item strong { display: block; color: var(--cyan); }
+    .flow-item span { color: var(--muted); font-size: 0.9rem; }
+
+    .table-wrap {
+      width: 100%;
+      margin-top: 14px;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 680px;
+    }
+    th, td {
+      padding: 11px 13px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: #172337;
+      color: #dffcff;
+      font-size: 0.86rem;
+      letter-spacing: 0.025em;
+    }
+    td { color: #c8d6e8; }
+    tr:last-child td { border-bottom: 0; }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 0.82rem;
+      font-weight: 700;
+    }
+    .ok { background: rgba(69, 212, 131, 0.14); color: var(--green); }
+    .warning { background: rgba(255, 200, 87, 0.14); color: var(--yellow); }
+
+    .bars { display: grid; gap: 15px; margin-top: 18px; }
+    .bar-row { display: grid; grid-template-columns: 165px 1fr 100px; gap: 12px; align-items: center; }
+    .bar-label { color: #cbd9ea; }
+    .bar-track { height: 12px; overflow: hidden; border-radius: 99px; background: #07101c; }
+    .bar-fill { height: 100%; border-radius: 99px; background: linear-gradient(90deg, var(--blue), var(--cyan)); }
+    .bar-fill.orange { background: linear-gradient(90deg, #ff5f47, var(--orange)); }
+    .bar-number { text-align: right; font-variant-numeric: tabular-nums; color: #dcecff; }
+
+    .callout {
+      margin-top: 18px;
+      padding: 15px 17px;
+      border-left: 4px solid var(--cyan);
+      border-radius: 0 10px 10px 0;
+      background: rgba(64, 224, 232, 0.075);
+      color: #cfdeef;
+    }
+    .callout.warning-note {
+      border-color: var(--yellow);
+      background: rgba(255, 200, 87, 0.075);
+    }
+    ul, ol { padding-left: 1.35rem; }
+    li + li { margin-top: 6px; }
+
+    .footer {
+      margin-top: 28px;
+      padding: 24px;
+      color: var(--muted);
+      text-align: center;
+    }
+    .print-button {
+      position: fixed;
+      right: 20px;
+      bottom: 20px;
+      z-index: 10;
+      padding: 11px 15px;
+      border: 1px solid rgba(64, 224, 232, 0.45);
+      border-radius: 999px;
+      background: #111d2d;
+      color: var(--text);
+      cursor: pointer;
+      box-shadow: 0 10px 32px rgba(0, 0, 0, 0.36);
+    }
+
+    @media (max-width: 820px) {
+      .page { width: min(100% - 20px, 1180px); padding-top: 10px; }
+      .hero, section { padding: 22px; }
+      .flow { grid-template-columns: 1fr 1fr; }
+      .bar-row { grid-template-columns: 1fr; gap: 5px; }
+      .bar-number { text-align: left; }
+    }
+    @media (max-width: 520px) { .flow { grid-template-columns: 1fr; } }
+
+    @media print {
+      :root { --bg: #fff; --surface: #fff; --surface-2: #f4f7fa; --line: #cfd8e3; --text: #101828; --muted: #46566c; }
+      body { background: #fff; color: #101828; font-size: 10.5pt; }
+      .page { width: 100%; padding: 0; }
+      .hero, section { box-shadow: none; background: #fff; break-inside: avoid; }
+      .hero::after, .print-button, .toc { display: none; }
+      .card, .flow-item, pre, th { background: #f4f7fa; color: #101828; }
+      a, .accent, .metric-value, .flow-item strong { color: #075985; }
+      code { color: #0f4c5c; background: #eef5f7; }
+      .table-wrap { overflow: visible; }
+      table { min-width: 0; font-size: 8.5pt; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="hero">
+      <p class="eyebrow">Итоговый отчёт</p>
+      <h1>Data Drift Guardian</h1>
+      <p class="lead">
+        Система контроля качества данных и статистического мониторинга дрейфа
+        для offline и online анализа.
+      </p>
+    </header>
+
+    <nav class="toc" aria-label="Оглавление">
+      <a href="#task">1. Постановка задачи</a>
+      <a href="#architecture">2. Архитектура</a>
+      <a href="#methods">3. Методы</a>
+      <a href="#experiments">4. Эксперименты</a>
+      <a href="#online">5. Online-мониторинг</a>
+      <a href="#quality">6. Проверка решения</a>
+      <a href="#reproduce">7. Воспроизводимость</a>
+      <a href="#limitations">8. Ограничения</a>
+    </nav>
+
+    <section id="task">
+      <h2>1. Постановка задачи</h2>
+      <p>
+        ML-модель может продолжать технически корректно выдавать прогнозы,
+        когда распределение production-данных уже отличается от обучающей
+        выборки. Такое изменение способно незаметно снизить качество модели и
+        создать бизнес-риски. Задача проекта — автоматически обнаруживать
+        нарушения целостности данных, локальные сдвиги признаков и изменение
+        структуры данных в целом.
+      </p>
+      <div class="grid">
+        <article class="card">
+          <h3>Reference</h3>
+          <p>Зафиксированная историческая выборка, относительно которой оцениваются новые данные.</p>
+        </article>
+        <article class="card">
+          <h3>Current</h3>
+          <p>Текущий батч либо окно production-событий, передаваемое в общий pipeline.</p>
+        </article>
+        <article class="card">
+          <h3>Результат</h3>
+          <p>JSON-безопасный словарь с качеством, метриками, порогами, статусами и алертами.</p>
+        </article>
+      </div>
+      <div class="callout warning-note">
+        Data drift описывает изменение <strong>P(X)</strong>. Concept drift
+        означает изменение <strong>P(y|X)</strong>. Без фактических ответов
+        основной модели статистика входов не доказывает concept drift, поэтому
+        система формирует сигнал для расследования, а не автоматическую команду
+        на переобучение.
+      </div>
+    </section>
+
+    <section id="architecture">
+      <h2>2. Архитектура решения</h2>
+      <p>
+        Все интерфейсы используют одну реализацию
+        <code>analyze(reference, current, config)</code>. CLI, HTML, Streamlit и
+        Online API не дублируют статистику и не меняют смысл результата.
+      </p>
+      <div class="flow" aria-label="Поток анализа">
+        <div class="flow-item"><strong>1 · Ingestion</strong><span>CSV/Parquet → DataFrame</span></div>
+        <div class="flow-item"><strong>2 · Schema</strong><span>Колонки и типы</span></div>
+        <div class="flow-item"><strong>3 · Quality</strong><span>NaN, дубликаты, диапазоны</span></div>
+        <div class="flow-item"><strong>4 · Drift</strong><span>KS, W₁, χ², PSI, JS</span></div>
+        <div class="flow-item"><strong>5 · ML</strong><span>OOF Adversarial Validation</span></div>
+        <div class="flow-item"><strong>6 · Alerts</strong><span>Пороги и объяснения</span></div>
+        <div class="flow-item"><strong>7 · Contract</strong><span>AnalysisResult 0.2</span></div>
+        <div class="flow-item"><strong>8 · Interfaces</strong><span>CLI, HTML, UI, API</span></div>
+      </div>
+
+      <h3>Online-контур</h3>
+      <p>
+        FastAPI принимает события и готовые батчи. События накапливаются в
+        непересекающихся count-based окнах, после чего становятся Current для
+        общего pipeline. SQLite хранит Reference, буфер, Run, результаты,
+        алерты, доставки и Feedback. Streamlit читает это состояние без
+        повторного анализа.
+      </p>
+      <div class="grid">
+        <article class="card"><h3>Идемпотентность</h3><p>Повтор идентичного event/batch возвращает прежний результат; конфликт получает HTTP 409.</p></article>
+        <article class="card"><h3>Persistent state</h3><p>SQLite WAL и Docker volume сохраняют Reference и историю после рестарта.</p></article>
+        <article class="card"><h3>Доставка</h3><p>JSONL и необязательный webhook имеют отдельные статусы и повторные попытки.</p></article>
+        <article class="card"><h3>Feedback</h3><p>Запаздывающий y_true позволяет считать Accuracy и ROC-AUC основной модели.</p></article>
+      </div>
+    </section>
+
+    <section id="methods">
+      <h2>3. Методы анализа</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Блок</th><th>Метод</th><th>Интерпретация</th></tr></thead>
+          <tbody>
+            <tr><td>Data Quality</td><td>Пропуски, дубликаты, Infinity, Min/Max</td><td>Пригодность данных и соблюдение схемы</td></tr>
+            <tr><td>Числовой drift</td><td>KS-test</td><td>Статистическая различимость распределений; p-value корректируется BH</td></tr>
+            <tr><td>Числовой drift</td><td>Wasserstein-1</td><td>Размер сдвига в единицах конкретного признака</td></tr>
+            <tr><td>Категориальный drift</td><td>χ² + Cramér's V</td><td>Различие частот и нормированная величина эффекта</td></tr>
+            <tr><td>Stability</td><td>PSI</td><td>Изменение долей по общим Reference-бинам/категориям</td></tr>
+            <tr><td>Stability</td><td>Jensen–Shannon divergence</td><td>Симметричное ограниченное различие распределений</td></tr>
+            <tr><td>Общий drift</td><td>Adversarial Validation</td><td>Способность LightGBM отличить Reference от Current по OOF ROC-AUC</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="muted">
+        NaN учитываются в Data Quality и исключаются из обычных drift-метрик.
+        Infinity считается критическим нарушением. Неприменимые тесты получают
+        статус skipped с причиной. Пороги PSI, JS и ROC-AUC требуют калибровки
+        под конкретный источник и бизнес-риск.
+      </p>
+    </section>
+
+    <section id="experiments">
+      <h2>4. Демонстрация и эксперименты</h2>
+      <p>
+        Воспроизводимый генератор создаёт независимые Reference и Current для
+        пяти сценариев: контроль, числовой, категориальный, missingness и
+        combined. Основной приёмочный сценарий использует Reference 5000,
+        Current 1200, seed 42 и <code>configs/demo_calibrated.yaml</code>.
+      </p>
+
+      <div class="grid">
+        <article class="card"><div class="metric-value">540</div><div class="metric-label">полных вызовов analyze</div></article>
+        <article class="card"><div class="metric-value">27</div><div class="metric-label">случаев в калибровочной сетке</div></article>
+        <article class="card"><div class="metric-value">20</div><div class="metric-label">seed на каждый случай</div></article>
+        <article class="card"><div class="metric-value">60</div><div class="metric-label">контрольных запусков</div></article>
+      </div>
+
+      <h3>Контроль и комбинированный сдвиг</h3>
+      <div class="bars">
+        <div class="bar-row"><span class="bar-label">Age Wasserstein · none</span><div class="bar-track"><div class="bar-fill" style="width:4.5%"></div></div><span class="bar-number">0.38</span></div>
+        <div class="bar-row"><span class="bar-label">Age Wasserstein · combined</span><div class="bar-track"><div class="bar-fill orange" style="width:100%"></div></div><span class="bar-number">8.44</span></div>
+        <div class="bar-row"><span class="bar-label">Region PSI · none</span><div class="bar-track"><div class="bar-fill" style="width:1.1%"></div></div><span class="bar-number">0.0024</span></div>
+        <div class="bar-row"><span class="bar-label">Region PSI · combined</span><div class="bar-track"><div class="bar-fill orange" style="width:100%"></div></div><span class="bar-number">0.2252</span></div>
+        <div class="bar-row"><span class="bar-label">Adversarial AUC · none</span><div class="bar-track"><div class="bar-fill" style="width:49.4%"></div></div><span class="bar-number">0.4938</span></div>
+        <div class="bar-row"><span class="bar-label">Adversarial AUC · combined</span><div class="bar-track"><div class="bar-fill orange" style="width:73.6%"></div></div><span class="bar-number">0.7357</span></div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Показатель combined</th><th>Значение</th><th>Порог</th><th>Решение</th></tr></thead>
+          <tbody>
+            <tr><td>Пропуски income</td><td>2% → 8% (+6 п.п.)</td><td>+5 п.п.</td><td><span class="status warning">⚠ Предупреждение</span></td></tr>
+            <tr><td>Age Wasserstein</td><td>8.4384</td><td>3.0 года</td><td><span class="status warning">⚠ Предупреждение</span></td></tr>
+            <tr><td>Region Cramér's V</td><td>0.195349</td><td>Диагностика</td><td>Размер эффекта</td></tr>
+            <tr><td>Adversarial OOF ROC-AUC</td><td>0.735718</td><td>0.70</td><td><span class="status warning">⚠ Предупреждение</span></td></tr>
+            <tr><td>Итог</td><td>9 алертов</td><td>—</td><td><span class="status warning">⚠ Предупреждение</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout">
+        Калибровка подтверждает ожидаемое направление: сильный сдвиг и большее
+        окно обычно повышают detection rate. Однако 20 seed недостаточно для
+        точной production-оценки false-positive rate, а синтетические пороги не
+        переносятся автоматически на реальные данные.
+      </div>
+    </section>
+
+    <section id="online">
+      <h2>5. Проверка online-мониторинга</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Сценарий</th><th>Фактический результат</th></tr></thead>
+          <tbody>
+            <tr><td>Reference</td><td>CSV, 5000 строк, активируется явно и восстанавливается после рестарта</td></tr>
+            <tr><td>Контрольный Batch</td><td><span class="status ok">✓ Успешно</span> 0 алертов</td></tr>
+            <tr><td>Combined Batch</td><td><span class="status warning">⚠ Предупреждение</span> drift/quality/ML-алерты сохранены</td></tr>
+            <tr><td>Частичное окно</td><td>300 строк остались в буфере без преждевременного анализа</td></tr>
+            <tr><td>Заполнение окна</td><td>Следующие события сформировали Run, лишние остались началом следующего окна</td></tr>
+            <tr><td>Доставка</td><td>JSONL delivery завершилась со статусом succeeded</td></tr>
+            <tr><td>Feedback</td><td>При включении рассчитываются Accuracy/ROC-AUC и performance_degradation</td></tr>
+            <tr><td>Docker restart</td><td>Reference и состояние сохранились в named volume</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        API публикует liveness/readiness, Swagger и версионированные пути
+        <code>/api/v1</code>. Контракт ограничивает размер запросов, проверяет
+        payload, различает повтор и конфликт idempotency key и не раскрывает
+        traceback во внешнем HTTP-ответе.
+      </p>
+    </section>
+
+    <section id="quality">
+      <h2>6. Проверка качества реализации</h2>
+      <div class="grid">
+        <article class="card"><div class="metric-value">391</div><div class="metric-label">автоматический тест пройден</div></article>
+        <article class="card"><div class="metric-value">2</div><div class="metric-label">healthy Compose-сервиса</div></article>
+        <article class="card"><div class="metric-value">10001</div><div class="metric-label">непривилегированный UID контейнеров</div></article>
+      </div>
+      <p>
+        Unit-тесты проверяют формулы, границы, NaN/Infinity, вырожденные случаи,
+        пороги и сериализацию. Integration-тесты проходят полный pipeline,
+        CLI/HTML, Streamlit, FastAPI и notebook. Acceptance-тесты подтверждают
+        восстановление окна после рестарта, none/combined, идемпотентность,
+        отказ webhook без потери Run и delayed Feedback.
+      </p>
+      <p>
+        Docker Compose был собран и запущен локально: API и dashboard получили
+        статус <code>healthy</code>, работают от UID/GID 10001 и читают одну
+        persistent SQLite-базу.
+      </p>
+    </section>
+
+    <section id="reproduce">
+      <h2>7. Воспроизводимость</h2>
+      <h3>Установка и тесты</h3>
+      <pre><code>py -3.13 -m venv .venv
+source .venv/Scripts/activate
+python -m pip install -r requirements.txt
+python scripts/check_environment.py
+python -m pytest -q</code></pre>
+
+      <h3>Данные и offline-отчёт</h3>
+      <pre><code>python scripts/generate_demo_data.py --scenario combined --format both
+
+python -m data_drift_guardian \
+  --reference data/generated/combined/reference.parquet \
+  --current data/generated/combined/current.parquet \
+  --config configs/demo_calibrated.yaml \
+  --json-output outputs/demo/combined.json \
+  --html-output outputs/demo/combined.html</code></pre>
+
+      <h3>Online stack</h3>
+      <pre><code>docker compose up --detach --build
+docker compose ps</code></pre>
+
+      <p class="muted">
+        В репозитории находятся генератор с фиксированным seed, YAML-
+        конфигурации, демонстрационный notebook, агрегированная калибровочная
+        сводка, Dockerfile, Compose и CI workflow.
+      </p>
+    </section>
+
+    <section id="limitations">
+      <h2>8. Ограничения и дальнейшее развитие</h2>
+      <ul>
+        <li>Демонстрационные пороги требуют повторной калибровки на истории конкретного источника.</li>
+        <li>SQLite-реализация рассчитана на один API worker и локальное persistent-хранилище.</li>
+        <li>API не содержит TLS, аутентификацию, авторизацию и rate limiting.</li>
+        <li>Kafka, Redis/Celery, горизонтальное масштабирование и автоматическое переобучение не входят в прототип.</li>
+        <li>Reference не заменяется автоматически: его обновление является явным решением оператора.</li>
+        <li>Delayed Feedback показывает деградацию качества, но не устанавливает причинный механизм concept drift.</li>
+      </ul>
+
+      <h3>Вывод</h3>
+      <p>
+        Разработан воспроизводимый пайплайн, закрывающий требования
+        к Data Quality, статистическим drift-метрикам, Adversarial Validation,
+        единому интерфейсному контракту, визуализации и online-мониторингу.
+        Контрольный сценарий остаётся стабильным, а намеренно внесённые
+        числовой, категориальный и missingness-сдвиги формируют объяснимые
+        алерты.
+      </p>
+    </section>
+
+  </main>
+
+  <button class="print-button" type="button" onclick="window.print()">Печать / PDF</button>
+</body>
+</html>

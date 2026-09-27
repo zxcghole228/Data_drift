@@ -23,7 +23,7 @@ data/online/
 outputs/
 *.csv
 !report/experiments/
-!report/experiments/*.csv
+!report/experiments/calibration_summary.csv
 *.parquet
 *.pkl
 *.joblib

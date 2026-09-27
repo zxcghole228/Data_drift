@@ -16,7 +16,11 @@ APP_TEST_TIMEOUT = 30
 CONFIG_SHA = "a" * 64
 
 
-def _write_config(tmp_path: Path) -> tuple[Path, Path]:
+def _write_config(
+    tmp_path: Path,
+    *,
+    performance_enabled: bool = False,
+) -> tuple[Path, Path]:
     config: dict[str, Any] = yaml.safe_load(
         (PROJECT_ROOT / "configs" / "online.yaml").read_text(encoding="utf-8")
     )
@@ -24,6 +28,7 @@ def _write_config(tmp_path: Path) -> tuple[Path, Path]:
     config["online"]["state_path"] = str(state_path)
     config["online"]["window"]["size"] = 4
     config["online"]["window"]["min_batch_rows"] = 2
+    config["online"]["performance"]["enabled"] = performance_enabled
     config_path = tmp_path / "online.yaml"
     config_path.write_text(
         yaml.safe_dump(config, allow_unicode=True, sort_keys=False),
@@ -36,7 +41,7 @@ def _online_app(monkeypatch: Any, config_path: Path) -> AppTest:
     monkeypatch.setenv("DDG_ONLINE_CONFIG", str(config_path))
     app = AppTest.from_file(str(APP_PATH), default_timeout=APP_TEST_TIMEOUT)
     app.run()
-    app.radio(key="application_mode").set_value("Online-мониторинг").run()
+    app.radio(key="application_mode").set_value("Онлайн-мониторинг").run()
     return app
 
 
@@ -133,14 +138,17 @@ def test_online_mode_shows_reference_history_alerts_and_performance(
     tmp_path: Path,
     monkeypatch: Any,
 ) -> None:
-    config_path, state_path = _write_config(tmp_path)
+    config_path, state_path = _write_config(
+        tmp_path,
+        performance_enabled=True,
+    )
     _seed_state(state_path)
 
     app = _online_app(monkeypatch, config_path)
 
     assert not app.exception
     metrics = {metric.label: metric.value for metric in app.metric}
-    assert metrics["Readiness"] == "ready"
+    assert metrics["Готовность данных"] == "Готово"
     assert metrics["Буфер"] == "1"
     assert metrics["Размер окна"] == "4"
     assert metrics["Run в снимке"] == "1"
@@ -148,10 +156,37 @@ def test_online_mode_shows_reference_history_alerts_and_performance(
     assert len(app.dataframe) == 4
 
     tables = [dataframe.value for dataframe in app.dataframe]
-    assert any("Run status" in table.columns for table in tables)
-    assert any("Severity" in table.columns for table in tables)
-    assert any("Delivery" in table.columns for table in tables)
+    assert any("Статус запуска" in table.columns for table in tables)
+    assert any("Статус" in table.columns for table in tables)
+    assert any("Канал" in table.columns for table in tables)
     assert any("Accuracy" in table.columns for table in tables)
+    rendered_tables = "\n".join(table.astype(str).to_string() for table in tables)
+    assert "✅ Завершён" in rendered_tables
+    assert "⚠️ Предупреждение" in rendered_tables
+    assert "✅ Успешно" in rendered_tables
+    assert "warning" not in rendered_tables
+    assert "completed" not in rendered_tables
+    assert "succeeded" not in rendered_tables
     assert any("Сдвиг age" in table.astype(str).to_string() for table in tables)
-    assert any("succeeded" in table.astype(str).to_string() for table in tables)
     assert any("0.75" in table.astype(str).to_string() for table in tables)
+
+
+def test_online_mode_explains_disabled_performance(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    config_path, state_path = _write_config(tmp_path)
+    _seed_state(state_path)
+
+    app = _online_app(monkeypatch, config_path)
+
+    assert not app.exception
+    assert len(app.dataframe) == 3
+    assert any(
+        "Проверка качества модели отключена" in message.value
+        for message in app.info
+    )
+    assert all(
+        "Accuracy" not in dataframe.value.columns
+        for dataframe in app.dataframe
+    )

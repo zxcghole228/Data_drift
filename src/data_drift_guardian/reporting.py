@@ -34,33 +34,37 @@ STATUS_LABELS = {
 
 REPORT_STYLES = """
 :root {
-  color-scheme: light;
-  --background: #f8fafc;
-  --surface: #ffffff;
-  --border: #cbd5e1;
-  --text: #0f172a;
-  --muted: #475569;
-  --ok: #166534;
-  --ok-bg: #dcfce7;
-  --warning: #92400e;
-  --warning-bg: #fef3c7;
-  --critical: #991b1b;
-  --critical-bg: #fee2e2;
-  --skipped: #334155;
-  --skipped-bg: #e2e8f0;
-  --error: #991b1b;
-  --error-bg: #fee2e2;
+  color-scheme: dark;
+  --background: #070b14;
+  --surface: #111827;
+  --surface-raised: #172033;
+  --surface-hover: #1e293b;
+  --border: #334155;
+  --text: #e5e7eb;
+  --muted: #94a3b8;
+  --ok: #86efac;
+  --ok-bg: #14532d;
+  --warning: #fde68a;
+  --warning-bg: #78350f;
+  --critical: #fecaca;
+  --critical-bg: #7f1d1d;
+  --skipped: #cbd5e1;
+  --skipped-bg: #334155;
+  --error: #fecaca;
+  --error-bg: #7f1d1d;
 }
 * { box-sizing: border-box; }
 body {
   margin: 0;
-  background: var(--background);
+  background:
+    radial-gradient(circle at top, #172033 0, var(--background) 36rem),
+    var(--background);
   color: var(--text);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
     "Segoe UI", sans-serif;
   line-height: 1.5;
 }
-main { width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 32px 0 64px; }
+main { width: min(1500px, calc(100% - 32px)); margin: 0 auto; padding: 32px 0 64px; }
 h1, h2, h3 { line-height: 1.2; }
 h1 { margin-bottom: 8px; }
 h2 { margin-top: 36px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
@@ -71,7 +75,8 @@ h2 { margin-top: 36px; border-bottom: 1px solid var(--border); padding-bottom: 8
   border-radius: 12px;
   margin: 16px 0;
   padding: 20px;
-  overflow-x: auto;
+  overflow: hidden;
+  box-shadow: 0 14px 36px rgb(0 0 0 / 18%);
 }
 .summary-grid {
   display: grid;
@@ -96,12 +101,65 @@ h2 { margin-top: 36px; border-bottom: 1px solid var(--border); padding-bottom: 8
 .status-critical { color: var(--critical); background: var(--critical-bg); }
 .status-skipped { color: var(--skipped); background: var(--skipped-bg); }
 .status-error { color: var(--error); background: var(--error-bg); }
-table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
-th, td { border-bottom: 1px solid var(--border); padding: 9px 10px; text-align: left; vertical-align: top; }
-th { background: #f1f5f9; white-space: nowrap; }
+.table-shell {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin: 12px 0 20px;
+  overflow: hidden;
+}
+.table-hint {
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.82rem;
+  padding: 7px 10px;
+}
+.table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-color: #64748b var(--surface-raised);
+  scrollbar-width: thin;
+}
+.table-scroll:focus { outline: 2px solid #60a5fa; outline-offset: -2px; }
+table {
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.9rem;
+  min-width: 100%;
+  width: max-content;
+}
+th, td {
+  border-bottom: 1px solid var(--border);
+  max-width: 360px;
+  overflow-wrap: anywhere;
+  padding: 9px 11px;
+  text-align: left;
+  vertical-align: top;
+}
+th {
+  background: var(--surface-raised);
+  color: #f8fafc;
+  position: sticky;
+  top: 0;
+  white-space: nowrap;
+  z-index: 2;
+}
+th:first-child { left: 0; z-index: 4; }
+td:first-child {
+  background: var(--surface);
+  box-shadow: 1px 0 0 var(--border);
+  left: 0;
+  position: sticky;
+  z-index: 1;
+}
+tbody tr:last-child td { border-bottom: 0; }
+tbody tr:hover td { background: var(--surface-hover); }
+tbody tr:hover td:first-child { background: var(--surface-hover); }
 td.preformatted { min-width: 220px; white-space: pre-wrap; word-break: break-word; }
 pre {
-  background: #0f172a;
+  background: #070b14;
+  border: 1px solid var(--border);
   border-radius: 8px;
   color: #e2e8f0;
   margin: 8px 0 0;
@@ -112,12 +170,33 @@ pre {
 }
 .alert { border-left: 5px solid var(--warning); }
 .alert-critical { border-left-color: var(--critical); }
-.plot { min-height: 420px; }
+.plot { min-height: 420px; overflow: visible; }
+.disclosure summary {
+  cursor: pointer;
+  font-weight: 700;
+  list-style-position: outside;
+}
+.disclosure summary::marker { color: #60a5fa; }
 .empty { color: var(--muted); font-style: italic; }
 @media print {
+  :root {
+    color-scheme: light;
+    --background: #ffffff;
+    --surface: #ffffff;
+    --surface-raised: #f1f5f9;
+    --surface-hover: #ffffff;
+    --border: #cbd5e1;
+    --text: #0f172a;
+    --muted: #475569;
+  }
   body { background: #ffffff; }
   main { width: 100%; padding: 0; }
   .panel, .summary-card { break-inside: avoid; box-shadow: none; }
+  .table-hint { display: none; }
+  .table-scroll { overflow: visible; }
+  table { font-size: 0.75rem; width: 100%; }
+  th, td { white-space: normal; }
+  th:first-child, td:first-child { position: static; }
 }
 """
 
@@ -466,7 +545,12 @@ def _reason_html(reason: object) -> str:
     return f'<p><strong>Причина:</strong> {_escape(reason)}</p>'
 
 
-def _render_table(headers: list[str], rows: list[list[object]]) -> str:
+def _render_table(
+    headers: list[str],
+    rows: list[list[object]],
+    *,
+    label: str = "Таблица результатов",
+) -> str:
     if not rows:
         return '<p class="empty">Нет данных для отображения.</p>'
 
@@ -480,12 +564,23 @@ def _render_table(headers: list[str], rows: list[list[object]]) -> str:
             cells.append(f"<td{css_class}>{html.escape(text, quote=True)}</td>")
         body_rows.append(f"<tr>{''.join(cells)}</tr>")
 
+    hint = (
+        '<div class="table-hint">Таблица прокручивается по горизонтали. '
+        "Используйте полосу снизу, Shift + колесо мыши или стрелки после "
+        "фокусировки.</div>"
+        if len(headers) >= 6
+        else ""
+    )
     return (
+        '<div class="table-shell">'
+        f"{hint}"
+        '<div class="table-scroll" role="region" tabindex="0" '
+        f'aria-label="{html.escape(label, quote=True)}">'
         "<table><thead><tr>"
         f"{header_html}"
         "</tr></thead><tbody>"
         f"{''.join(body_rows)}"
-        "</tbody></table>"
+        "</tbody></table></div></div>"
     )
 
 
@@ -582,64 +677,134 @@ def _render_schema(result: AnalysisResult) -> str:
     )
 
 
-def _check_row(source: str, feature: str | None, check: dict[str, Any]) -> list[object]:
-    details = check["details"]
+CHECK_LABELS = {
+    "reference_duplicate_fraction": "Доля дубликатов Reference",
+    "current_duplicate_fraction": "Доля дубликатов Current",
+    "reference_missing_fraction": "Доля пропусков Reference",
+    "current_missing_fraction": "Доля пропусков Current",
+    "missing_increase_pp": "Рост пропусков, п.п.",
+    "reference_infinite_count": "Бесконечности Reference",
+    "current_infinite_count": "Бесконечности Current",
+    "reference_min": "Минимум Reference",
+    "current_min": "Минимум Current",
+    "reference_max": "Максимум Reference",
+    "current_max": "Максимум Current",
+    "ks": "KS-test",
+    "wasserstein": "Wasserstein",
+    "chi2": "χ²-test",
+    "psi": "PSI",
+    "js": "Jensen–Shannon",
+}
+
+
+def _check_label(check: dict[str, Any]) -> str:
+    name = str(check["name"])
+    return CHECK_LABELS.get(name, name)
+
+
+def _quality_row(feature: str | None, check: dict[str, Any]) -> list[object]:
     return [
-        source,
-        feature or "—",
-        check["name"],
+        feature or "Вся таблица",
+        _check_label(check),
         check["status"],
         _format_value(check["value"]),
         _format_value(check["threshold"]),
-        _format_value(check["p_value"]),
-        _format_value(check["adjusted_p_value"]),
-        _format_value(check["alert"]),
         check["reason"] or "—",
-        details.get("threshold_source", "—"),
-        _format_value(details.get("cramers_v")),
-        _format_value(details.get("new_category_count")),
-        _format_value(details.get("disappeared_category_count")),
-        _format_value(details.get("pooled_category_count")),
-        _format_value(details.get("pooled_observation_fraction")),
-        _json_text(details),
     ]
 
 
-CHECK_HEADERS = [
-    "Источник",
+QUALITY_HEADERS = [
     "Признак",
     "Проверка",
     "Статус",
     "Значение",
     "Порог",
+    "Причина",
+]
+
+
+def _drift_metric_row(feature: str, check: dict[str, Any]) -> list[object]:
+    details = check["details"]
+    return [
+        feature,
+        _check_label(check),
+        check["status"],
+        _format_value(check["value"]),
+        _format_value(check["threshold"]),
+        _format_value(check["p_value"]),
+        _format_value(check["adjusted_p_value"]),
+        details.get("threshold_source", "—"),
+        check["reason"] or "—",
+    ]
+
+
+DRIFT_HEADERS = [
+    "Признак",
+    "Метод",
+    "Статус",
+    "Значение",
+    "Порог",
     "p-value",
     "Скорр. p-value",
-    "Алерт",
-    "Причина",
     "Источник порога",
+    "Причина",
+]
+
+
+CATEGORY_DIAGNOSTIC_HEADERS = [
+    "Признак",
+    "Метод",
     "Cramér's V",
     "Новых категорий",
     "Исчезнувших категорий",
     "Pooled-категорий",
     "Доля pooled-наблюдений",
-    "Детали",
 ]
+
+
+def _category_diagnostic_row(
+    feature: str,
+    check: dict[str, Any],
+) -> list[object] | None:
+    details = check["details"]
+    diagnostic_keys = {
+        "cramers_v",
+        "new_category_count",
+        "disappeared_category_count",
+        "pooled_category_count",
+        "pooled_observation_fraction",
+    }
+    if not diagnostic_keys.intersection(details):
+        return None
+
+    pooled_fraction = details.get("pooled_observation_fraction")
+    if isinstance(pooled_fraction, dict):
+        pooled_fraction = pooled_fraction.get("combined")
+    return [
+        feature,
+        _check_label(check),
+        _format_value(details.get("cramers_v")),
+        _format_value(details.get("new_category_count")),
+        _format_value(details.get("disappeared_category_count")),
+        _format_value(details.get("pooled_category_count")),
+        _format_value(pooled_fraction),
+    ]
 
 
 def _render_quality(result: AnalysisResult) -> str:
     quality = result["quality"]
     rows = [
-        _check_row("quality", None, check)
+        _quality_row(None, check)
         for check in quality["dataset_checks"]
     ]
     for feature, checks in quality["feature_checks"].items():
-        rows.extend(_check_row("quality", feature, check) for check in checks)
+        rows.extend(_quality_row(feature, check) for check in checks)
 
     return (
         '<section id="quality"><h2>Data Quality</h2><div class="panel">'
         f"<p>{_status_badge(quality['status'])}</p>"
         f"{_reason_html(quality['reason'])}"
-        f"{_render_table(CHECK_HEADERS, rows)}"
+        f"{_render_table(QUALITY_HEADERS, rows, label='Проверки Data Quality')}"
         "</div></section>"
     )
 
@@ -648,6 +813,7 @@ def _render_drift(result: AnalysisResult) -> str:
     drift = result["drift"]
     feature_rows: list[list[object]] = []
     check_rows: list[list[object]] = []
+    category_rows: list[list[object]] = []
     for feature, feature_result in drift["features"].items():
         feature_rows.append(
             [
@@ -656,23 +822,47 @@ def _render_drift(result: AnalysisResult) -> str:
                 feature_result["status"],
                 feature_result["n_reference_valid"],
                 feature_result["n_current_valid"],
-                _format_value(feature_result["alert"]),
                 feature_result["reason"] or "—",
             ]
         )
-        check_rows.extend(
-            _check_row("drift", feature, check)
-            for check in feature_result["checks"].values()
+        for check in feature_result["checks"].values():
+            check_rows.append(_drift_metric_row(feature, check))
+            diagnostic_row = _category_diagnostic_row(feature, check)
+            if diagnostic_row is not None:
+                category_rows.append(diagnostic_row)
+
+    category_diagnostics = ""
+    if category_rows:
+        diagnostic_table = _render_table(
+            CATEGORY_DIAGNOSTIC_HEADERS,
+            category_rows,
+            label="Диагностика категориального дрейфа",
+        )
+        category_diagnostics = (
+            '<details class="disclosure"><summary>'
+            "Дополнительная диагностика категориальных признаков "
+            f"({len(category_rows)})</summary>"
+            f"{diagnostic_table}"
+            "</details>"
         )
 
+    feature_headers = [
+        "Признак",
+        "Тип",
+        "Статус",
+        "Валидных Reference",
+        "Валидных Current",
+        "Причина",
+    ]
     return (
         '<section id="drift"><h2>Data Drift</h2><div class="panel">'
         f"<p>{_status_badge(drift['status'])}</p>"
         f"{_reason_html(drift['reason'])}"
         "<h3>Сводка по признакам</h3>"
-        f"{_render_table(['Признак', 'Тип', 'Статус', 'Reference valid', 'Current valid', 'Алерт', 'Причина'], feature_rows)}"
+        f"{_render_table(feature_headers, feature_rows, label='Сводка Data Drift по признакам')}"
         "<h3>Метрики</h3>"
-        f"{_render_table(CHECK_HEADERS, check_rows)}"
+        f"{_render_table(DRIFT_HEADERS, check_rows, label='Метрики Data Drift')}"
+        f"{category_diagnostics}"
         "</div></section>"
     )
 
@@ -716,8 +906,29 @@ def _render_effective_config(result: AnalysisResult) -> str:
     config = html.escape(_json_text(result["effective_config"]), quote=True)
     return (
         '<section id="config"><h2>Фактически применённая конфигурация</h2>'
-        f'<div class="panel"><pre>{config}</pre></div></section>'
+        '<details class="panel disclosure"><summary>Показать конфигурацию</summary>'
+        f"<pre>{config}</pre></details></section>"
     )
+
+
+def _apply_report_plot_theme(figure: go.Figure) -> None:
+    """Применить тёмную тему только к графикам автономного HTML-отчёта."""
+
+    figure.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="#111827",
+        plot_bgcolor="#0f172a",
+        font={"color": "#e5e7eb"},
+        legend={
+            "bgcolor": "rgba(17, 24, 39, 0.82)",
+            "bordercolor": "#334155",
+            "borderwidth": 1,
+        },
+    )
+    figure.update_xaxes(gridcolor="#334155", zerolinecolor="#475569")
+    figure.update_yaxes(gridcolor="#334155", zerolinecolor="#475569")
+    for annotation in figure.layout.annotations:
+        annotation.font.color = "#94a3b8"
 
 
 def _escape_figure_labels(figure: go.Figure, feature_type: FeatureType) -> None:
@@ -779,6 +990,7 @@ def _render_distributions(
             )
             continue
 
+        _apply_report_plot_theme(figure)
         _escape_figure_labels(figure, feature_type)
         fragment = to_html(
             figure,
@@ -850,8 +1062,8 @@ def _build_html_document(
             _render_quality(result),
             _render_drift(result),
             _render_adversarial(result),
-            _render_effective_config(result),
             distributions,
+            _render_effective_config(result),
         )
     )
     return (

@@ -10,5 +10,5 @@ python scripts/run_calibration.py
 `calibration_metadata.json`. CSV разрешены в `.gitignore` только для этой
 папки; исходные сгенерированные таблицы по-прежнему не коммитятся.
 
-Методика, схема полей и ограничения описаны в
-[`docs/calibration.md`](../../docs/calibration.md).
+Методика, схема полей, результаты и ограничения описаны в
+[`docs/experiments.md`](../../docs/experiments.md).
